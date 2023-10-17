@@ -195,6 +195,13 @@ class ExponentialRW(BaseVEM):
                     )
                     
         return N_count_new
+    
+    def _compute_eta(self, eta_base, xi1, xi2, eta_prev, di, dj):
+        """
+        Function to compute eta^{r+1}_{ij}.  
+        """
+
+        return eta_base + xi1 * eta_prev + xi2 * (di + dj)
 
     def _compute_full_eff_obs_time(self, eta):
 
