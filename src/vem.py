@@ -24,8 +24,8 @@ class BaseVEM():
         self.T_max = T_max; self.sampled_network = sampled_network
 
     @staticmethod
-    def _set_tau_equations(log_tau, num_nodes, num_groups, int_length, lam, pi, 
-                           N_count):
+    def _set_tau_equations(log_tau, num_nodes, num_groups, int_length, lam_minus, 
+                           pi_minus, N_count):
         """
         Defines the set of equations we need to solve. We assume tau
         is organised as (tau_11,...,tau_1K, tau_21,...,tau_2K,...,tau_NK). 
@@ -33,7 +33,7 @@ class BaseVEM():
         """
         fnc_return = []
         def log_f_km_Nij(k, m, i, j):
-            return np.log(lam[k,m]) * N_count[i][j] - int_length * lam[k,m]
+            return np.log(lam_minus[k,m]) * N_count[i][j] - int_length[i,j] * lam_minus[k,m]
         
 
         # Iterate over node and group numbers to create the system of 
@@ -42,8 +42,8 @@ class BaseVEM():
             eqns_i = [0] * num_groups
             for k in range(num_groups):
                 # Compute the double sum inside of each equation
-                if pi[k] != 0:
-                    eqn_ik = np.log(pi[k])
+                if pi_minus[k] != 0:
+                    eqn_ik = np.log(pi_minus[k])
                     for j in range(num_nodes):
                         if j == i:
                             pass
@@ -69,7 +69,7 @@ class BaseVEM():
 
         return np.array(fnc_return)
     
-    def _pi_and_lambda(self, tau_ell, int_length, N_count):
+    def _pi_and_lambda(self, tau_ell, eff_obs_time, N_count):
         """
         
         """   
@@ -80,11 +80,11 @@ class BaseVEM():
         
         # Efficiently compute tau_iktau_jm and store - can be used for 
         # numerator and denominator 
-        lam_ell = np.zeros(shape=(self.num_groups, self.num_groups))
+        lam_ell = np.zeros((self.num_groups, self.num_groups))
         for k in range(self.num_groups):
-            tau_k_2d = tau_ell[:,k].reshape((self.num_nodes,1))
+            tau_k_2d = tau_ell[:,k].reshape((self.num_nodes, 1))
             for m in range(self.num_groups):
-                tau_m_2d = tau_ell[:,m].reshape((1,self.num_nodes))
+                tau_m_2d = tau_ell[:,m].reshape((1, self.num_nodes))
                 # Here tau_prod_array[i,j] = tau_ik*tau_jm
                 tau_prod_array = tau_k_2d * tau_m_2d
                 if np.sum(tau_prod_array) < 1e-10:
@@ -92,7 +92,7 @@ class BaseVEM():
                 else:
                     lam_ell[k,m] = (
                         np.sum(tau_prod_array * N_count) /
-                        (int_length * np.sum(tau_prod_array))
+                        (np.sum(tau_prod_array * eff_obs_time))
                     )
                     # This can happen in rare cases that the tau_prod_array
                     # is zero except for diagonal entries
@@ -114,33 +114,29 @@ class BaseVEM():
 
         """
 
-        ## STEP 1 - Initialise parameters ##
-        # pi_ell_minus = np.array([1/self.num_groups] * self.num_groups)
-        # lam_ell_minus = np.random.uniform(low=0, high=10,
-        #                           size=(self.num_groups, self.num_groups))
-
         for i in range(n_EM_its): 
             # print(f"EM-run: {i+1}")      
-            ## STEP 2 - Compute tau_ell ##
+            ## STEP 1 - Compute tau_ell ##
             tau_eqns = lambda x: self._set_tau_equations(x, self.num_nodes, 
                                                          self.num_groups,
                                                          int_length, lam_ell_minus,
                                                          pi_ell_minus, N_count)
-            
+            # Solve for the current value of tau
             # soln = root(tau_eqns, np.log([1/self.num_groups]*(self.num_nodes*self.num_groups)),
             #             method='hybr')
             # soln_log_tau = soln.x
-            soln_log_tau = np.log([1/self.num_groups]*(self.num_nodes*self.num_groups))
-            for k in range(n_fp_its):
+            soln_log_tau = np.log([1 / self.num_groups] * (self.num_nodes * self.num_groups))
+            k = 0
+            while k < n_fp_its:
                 soln_log_tau = tau_eqns(soln_log_tau)
+                k += 1
             soln_tau = np.exp(soln_log_tau)
             mask = soln_tau < 1e-10
             soln_tau[mask] = 0
             tau_ell = soln_tau.reshape((self.num_nodes, self.num_groups))
 
-            ## STEP 3 - Compute pi_ell and lam_ell ##
-            pi_ell, lam_ell = self._pi_and_lambda(tau_ell, int_length,
-                                                  N_count)
+            ## STEP 2 - Compute pi_ell and lam_ell ##
+            pi_ell, lam_ell = self._pi_and_lambda(tau_ell, int_length, N_count)
             pi_ell_minus = pi_ell; lam_ell_minus = lam_ell
 
         return (tau_ell, pi_ell, lam_ell)
@@ -148,33 +144,29 @@ class BaseVEM():
 
 class ExponentialRW(BaseVEM):
     def __init__(self, num_nodes, num_groups, T_max,
-                 sampled_network, time_step):
+                 sampled_network, time_step, xi1, xi2,
+                 eta_base):
         super().__init__(num_nodes, num_groups, T_max, 
                          sampled_network)
+        
+        # Parameters for VEM 
         self.time_step = time_step
         self.intervals = np.arange(time_step, T_max, time_step)
         self.int_length = self.intervals[1]
 
-    def _compute_full_eff_count(self, eta):
+        # Parameters for eta update
+        self.xi1 = xi1; self.xi2 = xi2; self.eta_base = eta_base
 
-        eff_count_dict = dict()
-        s_prev = 0; N_count = np.zeros((self.num_nodes, self.num_nodes))
-        for num, s_curr in enumerate(self.intervals):
-            N_count_new = self._compute_reweighting(
-                N_count, s_curr, s_prev, eta 
-            )
-            eff_count_dict[num] = N_count_new
-            N_count = N_count_new.copy()
-            s_prev = s_curr
-
-        return eff_count_dict
-
-    def _compute_reweighting(self, N_count, s_curr, s_prev, eta) -> dict:
+    def _compute_eff_count_r(self, N_eff_count_r_minus, s_curr, 
+                               s_prev, eta_r) -> dict:
         """
-        Produces a dictionary of numpy arrays containing the counts
-        on each edge.
+        Computes N_ij^eta for step r. This uses the previous effective
+        count and the current eta value. Parameters:
+            - N_eff_count_r_minus: a np.array of the previous effective counts.
+            - s_curr, s_prev: the current and previous update point.
+            - eta_r: the current eta value.
         """
-        N_count_new = np.zeros((self.num_nodes, self.num_nodes))
+        N_eff_count_r = np.zeros((self.num_nodes, self.num_nodes))
         for i in range(self.num_nodes):
             for j in range(self.num_nodes):
                 if i == j:
@@ -189,79 +181,155 @@ class ExponentialRW(BaseVEM):
                     new_arrivals_ij = np_e_ij[mask]
 
                     # Update effective edge count
-                    N_count_new[i,j] = (
-                        np.exp(-eta*(s_curr - s_prev)) * N_count[i,j] +
-                        np.exp(-eta*(s_curr - new_arrivals_ij)).sum()
+                    N_eff_count_r[i,j] = (
+                        np.exp(-eta_r[i,j] * (s_curr - s_prev)) * N_eff_count_r_minus[i,j] +
+                        np.exp(-eta_r[i,j] * (s_curr - new_arrivals_ij)).sum()
                     )
                     
-        return N_count_new
+        return N_eff_count_r
     
-    def _compute_eta(self, eta_base, xi1, xi2, eta_prev, di, dj):
+    def _compute_eta(self, eta_r_minus, d):
         """
-        Function to compute eta^{r+1}_{ij}.  
+        Function to compute eta^r_{ij}. This is computed iteratively.  
         """
-
-        return eta_base + xi1 * eta_prev + xi2 * (di + dj)
-
-    def _compute_full_eff_obs_time(self, eta):
-
-        full_eff_obs_time = []
-        for s_curr in self.intervals:
-            full_eff_obs_time.append(self._compute_eff_obs_time(s_curr, eta))
-
-        return full_eff_obs_time
-
-    def _compute_eff_obs_time(self, s_curr, eta):
-        
-        return (1 - np.exp(-eta * s_curr)) / eta
-
-    def run_VEM(self, n_EM_its, n_fp_its, eta):
+        eta_r = np.ones((self.num_nodes, self.num_nodes))
+        for i in range(self.num_nodes):
+            for j in range(self.num_nodes):
+                if i == j:
+                    pass
+                else: 
+                    eta_r[i,j] = (
+                        self.eta_base + self.xi1 * eta_r_minus[i,j] + 
+                        self.xi2 * (d[i] + d[j])
+                    )
+        return eta_r
+    
+    def _compute_eff_obs_time(self, I_r_minus, s_curr, s_prev, eta_r):
         """
-        Run the top-hat VEM procedure. It will iterate over each 
-        of the intervals.
+        A method to compute the effective observation time. This is I_r, and
+        is computed iteratively.
         """
-        # Get dictionary of effective counts at each sampling point
-        eff_count_dict = self._compute_full_eff_count(eta)
+        I_r = I_r_minus + (1 - np.exp(-eta_r * (s_curr - s_prev))) / eta_r
+        for i in range(len(I_r)):
+            I_r[i,i] = 0
 
-        # Compute effective observation time
-        full_eff_obs_times = self._compute_full_eff_obs_time(eta)
+        return I_r
+    
+    def _compute_d(self, tau_minus, tau_minus_2, p=2):
+
+        d = np.zeros((self.num_nodes, ))
+        for i in range(self.num_nodes):
+            d[i] = (
+                (
+                abs(tau_minus[(self.num_groups * i):(self.num_groups * (i + 1))] -
+                tau_minus_2[(self.num_groups * i):(self.num_groups * (i + 1))]) ** p 
+                ).sum() ** (1 / p)
+            )
+        return d
+
+
+    # def _compute_full_eff_count(self, eta):
+
+    #     eff_count_dict = dict()
+    #     s_prev = 0; N_count = np.zeros((self.num_nodes, self.num_nodes))
+    #     for num, s_curr in enumerate(self.intervals):
+    #         N_count_new = self._compute_reweighting(
+    #             N_count, s_curr, s_prev, eta 
+    #         )
+    #         eff_count_dict[num] = N_count_new
+    #         N_count = N_count_new.copy()
+    #         s_prev = s_curr
+
+    #     return eff_count_dict
+
+    # def _compute_full_eff_obs_time(self, eta):
+
+    #     full_eff_obs_time = [eta] * len(self.intervals)
+    #     for i, s_curr in enumerate(self.intervals):
+    #         if i == 0:
+    #             pass
+    #         else:
+    #             full_eff_obs_time[i] = (
+    #                 full_eff_obs_time[i-1] + 
+    #                 self._compute_eff_obs_time(s_curr, eta)
+    #                 )
+
+    #     return full_eff_obs_time
+
+    def run_VEM(self, n_EM_its, n_fp_its):
+        """
+        Run the VEM procedure. It will iterate over each of the update
+        points sequentially.
+        """
+        # # Get dictionary of effective counts at each sampling point
+        # eff_count_dict = self._compute_full_eff_count(eta)
+
+        # # Compute effective observation time
+        # full_eff_obs_times = self._compute_full_eff_obs_time(eta)
 
         # Empty dictionaries for storing parameters
         tau_store, pi_store, lam_store = dict(), dict(), dict()
         group_preds_store = dict()
 
-        for it_num in range(len(self.intervals)):
-            print(f"Iteration: {it_num+1} of {len(self.intervals)}")
+        # Instantiate initial values
+        s_prev = 0
+        I_r_minus = np.zeros((self.num_nodes, self.num_nodes))
+        eta_r = np.tile(self.eta_base, (self.num_nodes, self.num_nodes)) 
+        eta_r_minus = np.tile(self.eta_base, (self.num_nodes, self.num_nodes)) 
+        N_eff_count_r_minus = np.zeros((self.num_nodes, self.num_nodes))
+        tau_r_minus_2 = np.zeros((self.num_groups * self.num_nodes, ))
+        tau_r_minus = np.zeros((self.num_groups * self.num_nodes, ))
 
-            # Extract effective interval length and effective counts
-            eff_int_length = full_eff_obs_times[it_num]
-            eff_N_count = eff_count_dict[it_num]
+        print("Beginning procedure...")
+        for it_num, s_curr in enumerate(self.intervals):
+            print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...")
+
+            # Compute eta_r (the current decay rate)
+            if (it_num != 0) & (it_num != 1):
+                # Compute d^r-2,r-1 values
+                d_r_minus_2_r_minus = self._compute_d(tau_r_minus, tau_r_minus_2)
+                eta_r = self._compute_eta(eta_r_minus, d_r_minus_2_r_minus)
+
+            # Compute the effective counts and the effective observation time
+            I_r = self._compute_eff_obs_time(I_r_minus, s_curr, s_prev, eta_r)
+            N_eff_count_r = self._compute_eff_count_r(N_eff_count_r_minus, s_curr,
+                                                      s_prev, eta_r)
 
             if it_num == 0:
                     # Initialise parameters randomly if it's the first run.
-                    pi_ell_minus = np.array([1/self.num_groups] * self.num_groups)
-                    lam_ell_minus = np.random.uniform(low=0, high=10, 
+                    pi_r_minus = np.array([1/self.num_groups] * self.num_groups)
+                    lam_r_minus = np.random.uniform(low=0, high=10, 
                                                       size=(self.num_groups, self.num_groups))
             else:
                 # If not first run, then update current previous parameter estimates
                 # with estimates from previous run
-                pi_ell_minus = pi
-                lam_ell_minus = lam
+                pi_r_minus = pi_r
+                lam_r_minus = lam_r
 
             # Compute parameter estimates
-            (tau, pi, lam) = (
-                        self._run_base_VEM(pi_ell_minus, lam_ell_minus, 
-                                           n_EM_its, n_fp_its, eff_int_length, eff_N_count)
+            (tau_r, pi_r, lam_r) = (
+                        self._run_base_VEM(pi_r_minus, lam_r_minus, 
+                                           n_EM_its, n_fp_its, I_r, N_eff_count_r)
             )
 
             # Extract group predictions
-            group_preds = np.argmax(tau, axis=1)
+            group_preds = np.argmax(tau_r, axis=1)
 
             # Store the parameters
-            tau_store[it_num] = tau
-            pi_store[it_num] = pi
-            lam_store[it_num] = lam
+            tau_store[it_num] = tau_r; pi_store[it_num] = pi_r; lam_store[it_num] = lam_r
             group_preds_store[it_num] = group_preds
+
+            # Update for computing d_i^r-2,r-2
+            if (it_num == 0):
+                tau_r_minus_2 = tau_r
+            elif (it_num == 1):
+                taur_r_minus = tau_r
+            else:
+                tau_r_minus_2 = taur_r_minus
+                taur_r_minus = tau_r
+
+            # Update values
+            s_prev = s_curr; I_r_minus = I_r; eta_r_minus = eta_r
 
         return (tau_store, pi_store, lam_store, group_preds_store)
 
@@ -340,6 +408,8 @@ class TopHatVEM(BaseVEM):
             pi_store[int_num] = pi
             lam_store[int_num] = lam
             group_preds_store[int_num] = group_preds
+
+            print(eta_r)
 
         return (tau_store, pi_store, lam_store, group_preds_store)
 
