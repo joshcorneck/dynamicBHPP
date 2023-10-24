@@ -42,19 +42,19 @@ class BaseVEM():
             eqns_i = [0] * num_groups
             for k in range(num_groups):
                 # Compute the double sum inside of each equation
-                if pi_minus[k] != 0:
+                if pi_minus[k] == 0:
+                    eqn_ik = np.log(1e-10)
+                else: 
                     eqn_ik = np.log(pi_minus[k])
-                    for j in range(num_nodes):
-                        if j == i:
-                            pass
-                        else:
-                            for m in range(num_groups):
-                                eqn_ik += (
-                                    (log_f_km_Nij(k,m,i,j) + log_f_km_Nij(m,k,j,i)) * 
-                                    np.exp(log_tau[num_groups * j + m])
-                                )
-                else:
-                    eqn_ik = 0
+                for j in range(num_nodes):
+                    if j == i:
+                        pass
+                    else:
+                        for m in range(num_groups):
+                            eqn_ik += (
+                                (log_f_km_Nij(k,m,i,j) + log_f_km_Nij(m,k,j,i)) * 
+                                np.exp(log_tau[num_groups * j + m])
+                            )
                 eqns_i[k] = eqn_ik
 
             eqns_i = np.array(eqns_i); c = eqns_i.max()
@@ -80,24 +80,30 @@ class BaseVEM():
         
         # Efficiently compute tau_iktau_jm and store - can be used for 
         # numerator and denominator 
-        lam_ell = np.zeros((self.num_groups, self.num_groups))
-        for k in range(self.num_groups):
-            tau_k_2d = tau_ell[:,k].reshape((self.num_nodes, 1))
-            for m in range(self.num_groups):
-                tau_m_2d = tau_ell[:,m].reshape((1, self.num_nodes))
-                # Here tau_prod_array[i,j] = tau_ik*tau_jm
-                tau_prod_array = tau_k_2d * tau_m_2d
-                if np.sum(tau_prod_array) < 1e-10:
-                    lam_ell[k,m] = 1e-10
-                else:
-                    lam_ell[k,m] = (
-                        np.sum(tau_prod_array * N_count) /
-                        (np.sum(tau_prod_array * eff_obs_time))
-                    )
-                    # This can happen in rare cases that the tau_prod_array
-                    # is zero except for diagonal entries
-                    if lam_ell[k,m] == 0:
-                        lam_ell[k,m] = 1e-10
+        # lam_ell = np.zeros((self.num_groups, self.num_groups))
+        # for k in range(self.num_groups):
+        #     tau_k_2d = tau_ell[:,k].reshape((self.num_nodes, 1))
+        #     for m in range(self.num_groups):
+        #         tau_m_2d = tau_ell[:,m].reshape((1, self.num_nodes))
+        #         # Here tau_prod_array[i,j] = tau_ik*tau_jm
+        #         tau_prod_array = tau_k_2d * tau_m_2d
+        #         if np.sum(tau_prod_array) < 1e-10:
+        #             lam_ell[k,m] = 1e-10
+        #         else:
+        #             lam_ell[k,m] = (
+        #                 np.sum(tau_prod_array * N_count) /
+        #                 (np.sum(tau_prod_array * eff_obs_time))
+        #             )
+        #             # This can happen in rare cases that the tau_prod_array
+        #             # is zero except for diagonal entries
+        #             if lam_ell[k,m] == 0:
+        #                 lam_ell[k,m] = 1e-10
+        numerator = (tau_ell.T @ N_count @ tau_ell)
+        denominator = (tau_ell.T @ eff_obs_time @ tau_ell)
+        mask = (denominator != 0)
+        lam_ell = np.zeros_like(numerator, dtype=float)
+        lam_ell[mask] = numerator[mask] / denominator[mask]
+        lam_ell[lam_ell == 0] = 1e-10
 
         return pi_ell, lam_ell
     
@@ -209,7 +215,8 @@ class ExponentialRW(BaseVEM):
         A method to compute the effective observation time. This is I_r, and
         is computed iteratively.
         """
-        I_r = I_r_minus + (1 - np.exp(-eta_r * (s_curr - s_prev))) / eta_r
+        I_r = (np.exp(-eta_r * (s_curr - s_prev)) * I_r_minus + 
+               (1 - np.exp(-eta_r * (s_curr - s_prev))) / eta_r)
         for i in range(len(I_r)):
             I_r[i,i] = 0
 
@@ -226,35 +233,6 @@ class ExponentialRW(BaseVEM):
                 ).sum() ** (1 / p)
             )
         return d
-
-
-    # def _compute_full_eff_count(self, eta):
-
-    #     eff_count_dict = dict()
-    #     s_prev = 0; N_count = np.zeros((self.num_nodes, self.num_nodes))
-    #     for num, s_curr in enumerate(self.intervals):
-    #         N_count_new = self._compute_reweighting(
-    #             N_count, s_curr, s_prev, eta 
-    #         )
-    #         eff_count_dict[num] = N_count_new
-    #         N_count = N_count_new.copy()
-    #         s_prev = s_curr
-
-    #     return eff_count_dict
-
-    # def _compute_full_eff_obs_time(self, eta):
-
-    #     full_eff_obs_time = [eta] * len(self.intervals)
-    #     for i, s_curr in enumerate(self.intervals):
-    #         if i == 0:
-    #             pass
-    #         else:
-    #             full_eff_obs_time[i] = (
-    #                 full_eff_obs_time[i-1] + 
-    #                 self._compute_eff_obs_time(s_curr, eta)
-    #                 )
-
-    #     return full_eff_obs_time
 
     def run_VEM(self, n_EM_its, n_fp_its):
         """
@@ -288,7 +266,9 @@ class ExponentialRW(BaseVEM):
             if (it_num != 0) & (it_num != 1):
                 # Compute d^r-2,r-1 values
                 d_r_minus_2_r_minus = self._compute_d(tau_r_minus, tau_r_minus_2)
+                # print(d_r_minus_2_r_minus)
                 eta_r = self._compute_eta(eta_r_minus, d_r_minus_2_r_minus)
+                # print(eta_r[0,1])
 
             # Compute the effective counts and the effective observation time
             I_r = self._compute_eff_obs_time(I_r_minus, s_curr, s_prev, eta_r)
@@ -296,10 +276,10 @@ class ExponentialRW(BaseVEM):
                                                       s_prev, eta_r)
 
             if it_num == 0:
-                    # Initialise parameters randomly if it's the first run.
-                    pi_r_minus = np.array([1/self.num_groups] * self.num_groups)
-                    lam_r_minus = np.random.uniform(low=0, high=10, 
-                                                      size=(self.num_groups, self.num_groups))
+                # Initialise parameters randomly if it's the first run.
+                pi_r_minus = np.array([1/self.num_groups] * self.num_groups)
+                lam_r_minus = np.random.uniform(low=0, high=10, 
+                                                    size=(self.num_groups, self.num_groups))
             else:
                 # If not first run, then update current previous parameter estimates
                 # with estimates from previous run
@@ -314,6 +294,9 @@ class ExponentialRW(BaseVEM):
 
             # Extract group predictions
             group_preds = np.argmax(tau_r, axis=1)
+
+            # Reshape tau_r
+            tau_r = tau_r.flatten()
 
             # Store the parameters
             tau_store[it_num] = tau_r; pi_store[it_num] = pi_r; lam_store[it_num] = lam_r
@@ -408,8 +391,6 @@ class TopHatVEM(BaseVEM):
             pi_store[int_num] = pi
             lam_store[int_num] = lam
             group_preds_store[int_num] = group_preds
-
-            print(eta_r)
 
         return (tau_store, pi_store, lam_store, group_preds_store)
 
