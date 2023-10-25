@@ -24,7 +24,7 @@ class BaseVEM():
         self.T_max = T_max; self.sampled_network = sampled_network
 
     @staticmethod
-    def _set_tau_equations(log_tau, num_nodes, num_groups, int_length, lam_minus, 
+    def _set_tau_equations_log(log_tau, num_nodes, num_groups, int_length, lam_minus, 
                            pi_minus, N_count):
         """
         Defines the set of equations we need to solve. We assume tau
@@ -68,36 +68,28 @@ class BaseVEM():
         fnc_return = [eqn for sublist in fnc_return for eqn in sublist]
 
         return np.array(fnc_return)
-    
-    def _pi_and_lambda(self, tau_ell, eff_obs_time, N_count):
+
+    def _pi_and_lambda(self, tau_ell, eff_obs_time, N_count, Bayes):
         """
         
         """   
         # Compute current pi estimate
-        pi_ell = np.mean(tau_ell, axis=0)
+        if Bayes:
+            # Sample group assignments
+            group_assigments = (
+                np.array([np.random.choice(
+                    np.arange(self.num_groups), p=tau_i) for tau_i in tau_ell])
+            )
+            _, group_counts = np.unique(group_assigments, return_counts=True)
+
+            # Update alpha and pi using conjugate of dirichlet prior
+            self.alpha = (self.alpha + group_counts) / (self.num_nodes + self.alpha.sum())
+            pi_ell = np.random.dirichlet(self.alpha) 
+            
+        else:
+            pi_ell = np.mean(tau_ell, axis=0)
         
         # Compute current lambda estimate
-        
-        # Efficiently compute tau_iktau_jm and store - can be used for 
-        # numerator and denominator 
-        # lam_ell = np.zeros((self.num_groups, self.num_groups))
-        # for k in range(self.num_groups):
-        #     tau_k_2d = tau_ell[:,k].reshape((self.num_nodes, 1))
-        #     for m in range(self.num_groups):
-        #         tau_m_2d = tau_ell[:,m].reshape((1, self.num_nodes))
-        #         # Here tau_prod_array[i,j] = tau_ik*tau_jm
-        #         tau_prod_array = tau_k_2d * tau_m_2d
-        #         if np.sum(tau_prod_array) < 1e-10:
-        #             lam_ell[k,m] = 1e-10
-        #         else:
-        #             lam_ell[k,m] = (
-        #                 np.sum(tau_prod_array * N_count) /
-        #                 (np.sum(tau_prod_array * eff_obs_time))
-        #             )
-        #             # This can happen in rare cases that the tau_prod_array
-        #             # is zero except for diagonal entries
-        #             if lam_ell[k,m] == 0:
-        #                 lam_ell[k,m] = 1e-10
         numerator = (tau_ell.T @ N_count @ tau_ell)
         denominator = (tau_ell.T @ eff_obs_time @ tau_ell)
         mask = (denominator != 0)
@@ -108,7 +100,8 @@ class BaseVEM():
         return pi_ell, lam_ell
     
     def _run_base_VEM(self, pi_ell_minus, lam_ell_minus, n_EM_its, 
-                      n_fp_its, int_length, N_count):
+                      n_fp_its, int_length, N_count, jitter_sd=None, 
+                      tau_prev=None, Bayes=False):
         """
         Parameters:
          - pi_ell_minus: initialisation for pi vector.
@@ -123,15 +116,26 @@ class BaseVEM():
         for i in range(n_EM_its): 
             # print(f"EM-run: {i+1}")      
             ## STEP 1 - Compute tau_ell ##
-            tau_eqns = lambda x: self._set_tau_equations(x, self.num_nodes, 
-                                                         self.num_groups,
-                                                         int_length, lam_ell_minus,
-                                                         pi_ell_minus, N_count)
+            tau_eqns = lambda x: self._set_tau_equations_log(x, self.num_nodes, 
+                                                            self.num_groups,
+                                                            int_length, lam_ell_minus,
+                                                            pi_ell_minus, N_count)
             # Solve for the current value of tau
-            # soln = root(tau_eqns, np.log([1/self.num_groups]*(self.num_nodes*self.num_groups)),
-            #             method='hybr')
-            # soln_log_tau = soln.x
-            soln_log_tau = np.log([1 / self.num_groups] * (self.num_nodes * self.num_groups))
+            # soln = root(tau_eqns, np.log([1/self.num_groups]*(self.num_nodes*self.num_groups)))
+            # soln_tau = soln.x
+            # print(soln_tau)
+
+            if tau_prev is not None:
+                # Initialise tau as a jittered version of the previous values.
+                # Reshape the previous value to jitter amongs rows and then flatten 
+                jitter = jitter_sd * np.random.normal(size=(self.num_nodes, self.num_groups))
+                jittered_array = np.abs(tau_prev + jitter)
+                row_norms = np.linalg.norm(jittered_array, axis=1, ord=1)
+                soln_log_tau = np.log(jittered_array / row_norms[:, np.newaxis]).flatten()
+            else:
+                # If it's the first run, or no previous vector supplied then uniform prior
+                soln_log_tau = np.log([1 / self.num_groups] * (self.num_nodes * self.num_groups))
+
             k = 0
             while k < n_fp_its:
                 soln_log_tau = tau_eqns(soln_log_tau)
@@ -142,7 +146,7 @@ class BaseVEM():
             tau_ell = soln_tau.reshape((self.num_nodes, self.num_groups))
 
             ## STEP 2 - Compute pi_ell and lam_ell ##
-            pi_ell, lam_ell = self._pi_and_lambda(tau_ell, int_length, N_count)
+            pi_ell, lam_ell = self._pi_and_lambda(tau_ell, int_length, N_count, Bayes)
             pi_ell_minus = pi_ell; lam_ell_minus = lam_ell
 
         return (tau_ell, pi_ell, lam_ell)
@@ -186,12 +190,17 @@ class ExponentialRW(BaseVEM):
                     mask = (s_prev < np_e_ij) & (np_e_ij <= s_curr)
                     new_arrivals_ij = np_e_ij[mask]
 
-                    # Update effective edge count
-                    N_eff_count_r[i,j] = (
-                        np.exp(-eta_r[i,j] * (s_curr - s_prev)) * N_eff_count_r_minus[i,j] +
-                        np.exp(-eta_r[i,j] * (s_curr - new_arrivals_ij)).sum()
-                    )
-                    
+                    if len(new_arrivals_ij) != 0:
+                        # Update effective edge count
+                        N_eff_count_r[i,j] = (
+                            np.exp(-eta_r[i,j] * (s_curr - s_prev)) * N_eff_count_r_minus[i,j] +
+                            np.exp(-eta_r[i,j] * (s_curr - new_arrivals_ij)).sum()
+                        )
+                    else:
+                        N_eff_count_r[i,j] = (
+                            np.exp(-eta_r[i,j] * (s_curr - s_prev)) * N_eff_count_r_minus[i,j]
+                        )
+        
         return N_eff_count_r
     
     def _compute_eta(self, eta_r_minus, d):
@@ -228,13 +237,16 @@ class ExponentialRW(BaseVEM):
         for i in range(self.num_nodes):
             d[i] = (
                 (
-                abs(tau_minus[(self.num_groups * i):(self.num_groups * (i + 1))] -
-                tau_minus_2[(self.num_groups * i):(self.num_groups * (i + 1))]) ** p 
+                abs(
+                    tau_minus[(self.num_groups * i):(self.num_groups * (i + 1))] -
+                    tau_minus_2[(self.num_groups * i):(self.num_groups * (i + 1))]
+                ) ** p 
                 ).sum() ** (1 / p)
             )
+
         return d
 
-    def run_VEM(self, n_EM_its, n_fp_its):
+    def run_VEM(self, n_EM_its, n_fp_its, jitter_sd, Bayes=False):
         """
         Run the VEM procedure. It will iterate over each of the update
         points sequentially.
@@ -268,7 +280,6 @@ class ExponentialRW(BaseVEM):
                 d_r_minus_2_r_minus = self._compute_d(tau_r_minus, tau_r_minus_2)
                 # print(d_r_minus_2_r_minus)
                 eta_r = self._compute_eta(eta_r_minus, d_r_minus_2_r_minus)
-                # print(eta_r[0,1])
 
             # Compute the effective counts and the effective observation time
             I_r = self._compute_eff_obs_time(I_r_minus, s_curr, s_prev, eta_r)
@@ -277,9 +288,16 @@ class ExponentialRW(BaseVEM):
 
             if it_num == 0:
                 # Initialise parameters randomly if it's the first run.
-                pi_r_minus = np.array([1/self.num_groups] * self.num_groups)
+                # If using Bayesian, initialise the alpha vector
+                if Bayes:
+                    self.alpha = np.array([1] * self.num_groups)
+                    pi_r_minus = np.random.dirichlet(self.alpha)
+                else:
+                    pi_r_minus = np.array([1/self.num_groups] * self.num_groups)
                 lam_r_minus = np.random.uniform(low=0, high=10, 
                                                     size=(self.num_groups, self.num_groups))
+                tau_r = (np.array([1 / self.num_groups] * (self.num_nodes * self.num_groups)).
+                        reshape((self.num_nodes, self.num_groups)))
             else:
                 # If not first run, then update current previous parameter estimates
                 # with estimates from previous run
@@ -289,30 +307,30 @@ class ExponentialRW(BaseVEM):
             # Compute parameter estimates
             (tau_r, pi_r, lam_r) = (
                         self._run_base_VEM(pi_r_minus, lam_r_minus, 
-                                           n_EM_its, n_fp_its, I_r, N_eff_count_r)
+                                           n_EM_its, n_fp_its, I_r, N_eff_count_r,
+                                           jitter_sd, tau_r, Bayes)
             )
 
             # Extract group predictions
             group_preds = np.argmax(tau_r, axis=1)
 
-            # Reshape tau_r
-            tau_r = tau_r.flatten()
-
             # Store the parameters
-            tau_store[it_num] = tau_r; pi_store[it_num] = pi_r; lam_store[it_num] = lam_r
+            tau_store[it_num] = tau_r 
+            pi_store[it_num] = pi_r; lam_store[it_num] = lam_r
             group_preds_store[it_num] = group_preds
 
             # Update for computing d_i^r-2,r-2
             if (it_num == 0):
-                tau_r_minus_2 = tau_r
+                tau_r_minus_2 = tau_r.flatten()
             elif (it_num == 1):
-                taur_r_minus = tau_r
+                tau_r_minus = tau_r.flatten()
             else:
-                tau_r_minus_2 = taur_r_minus
-                taur_r_minus = tau_r
+                tau_r_minus_2 = tau_r_minus
+                tau_r_minus = tau_r.flatten()
 
             # Update values
             s_prev = s_curr; I_r_minus = I_r; eta_r_minus = eta_r
+            N_eff_count_r_minus = N_eff_count_r
 
         return (tau_store, pi_store, lam_store, group_preds_store)
 
