@@ -1,11 +1,7 @@
-#%%
 import numpy as np
 from scipy.stats import norm
 from scipy.optimize import root
 from scipy.special import digamma, logsumexp
-
-from fully_connected_poisson import FullyConnectedPoissonNetwork
-
 
 class VariationalBayes:
 
@@ -22,14 +18,14 @@ class VariationalBayes:
         self.simple = simple
 
         # Algorithm parameters
-        self.alpha = np.zeros((self.K, self.K))
-        self.alpha_0 = alpha_0
+        # self.alpha = np.zeros((self.K, self.K))
+        self.alpha_prior = alpha_0
 
-        self.beta = np.zeros((self.K, self.K))
-        self.beta_0 = beta_0
+        # self.beta = np.zeros((self.K, self.K))
+        self.beta_prior = beta_0
         
-        self.n = np.zeros((self.K, ))
-        self.n_0 = n_0
+        # self.n = np.zeros((self.K, ))
+        self.n_prior = n_0
 
         self.eff_count = np.zeros((self.N, self.N))
         self.eff_obs_time = np.zeros((self.N, self.N))
@@ -89,7 +85,7 @@ class VariationalBayes:
         """
         # Function to compute sum over groups within exponential
         def sum_term(i_prime, j, k_prime):
-            term = self.tau[j,:] * (
+            term = self.tau_prior[j,:] * (
                 self.eff_count[i_prime,j] * (
                     digamma(self.alpha[k_prime,:]) - np.log(self.beta[k_prime,:])
                 ) +
@@ -105,7 +101,8 @@ class VariationalBayes:
         tau_temp = np.zeros((self.N, self.K))
         for i_prime in range(self.N):
             for k_prime in range(self.K):
-                temp_sum = digamma(self.n[k_prime]) - digamma(self.N)
+                temp_sum = (self.delta_z[i_prime] * 
+                            (digamma(self.n[k_prime]) - digamma(self.n.sum())))
                 for j in range(self.N):
                     if j != i_prime:
                         temp_sum += sum_term(i_prime, j, k_prime)
@@ -118,31 +115,41 @@ class VariationalBayes:
     def _update_q_pi(self):
         """
         """
-        self.n = self.tau.sum(axis=0) + self.decay_pi * self.n
+        self.n = (self.delta_pi * (self.n_prior - 1) + 
+                  (np.tile(self.delta_z[:, np.newaxis], self.K) * self.tau).sum(axis=0) +
+                  1)
 
     def _update_q_lam(self):
         """
         """
-        self.alpha = self.tau.T @ self.eff_count @ self.tau + self.decay_lam * self.alpha
-        self.beta = self.tau.T @ self.eff_obs_time @ self.tau + self.decay_lam * self.beta
+        self.alpha = self.delta_lam * self.alpha_prior + self.tau.T @ self.eff_count @ self.tau 
+        self.beta = self.delta_lam * self.beta_prior + self.tau.T @ self.eff_obs_time @ self.tau 
 
-    def run_full_var_bayes(self, decay_lam, decay_pi = 1):
+    def run_full_var_bayes(self, delta_z=1, n_cavi=1):
         """
         """
-        self.decay_pi = decay_pi
-        self.decay_lam = decay_lam
+        # Decay rates for the prior
+        # self.delta_z = np.zeros((self.N, ))
+        self.delta_z = np.array([delta_z] * self.N).reshape((self.N, ))
+        self.delta_pi = delta_z
+        self.delta_lam = delta_z
 
         # Empty arrays for storage
-        self.tau_store = np.zeros((len(self.intervals), self.N, self.K))
-        self.n_store = np.zeros((len(self.intervals), self.K))
-        self.alpha_store = np.zeros((len(self.intervals), self.K, self.K))
-        self.beta_store = np.zeros((len(self.intervals), self.K, self.K))
+        self.tau_store = np.zeros((len(self.intervals) + 1, self.N, self.K))
+        self.n_store = np.zeros((len(self.intervals) + 1, self.K))
+        self.alpha_store = np.zeros((len(self.intervals) + 1, self.K, self.K))
+        self.beta_store = np.zeros((len(self.intervals) + 1, self.K, self.K))
     
         # Initialise tau, n, alpha and beta
-        self.tau = np.array([1 / self.K] * (self.N * self.K)).reshape((self.N, self.K))
-        self.n = self.n_0 
-        self.alpha = self.alpha_0
-        self.beta = self.beta_0
+        self.tau_prior = np.array([1 / self.K] * (self.N * self.K)).reshape((self.N, self.K))
+        self.n = self.n_prior 
+        self.alpha = self.alpha_prior
+        self.beta = self.beta_prior
+
+        self.tau_store[0,:,:] = self.tau
+        self.n_store[0,:] = self.n
+        self.alpha_store[0,:,:] = self.alpha
+        self.beta_store[0,:,:] = self.beta
 
         for it_num, update_time in enumerate(self.intervals):
             print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...")
@@ -150,42 +157,22 @@ class VariationalBayes:
             self._compute_eff_count(update_time)
             self._compute_eff_obs_time(update_time)
 
-            self._update_q_z()
-            self._update_q_pi()
-            self._update_q_lam()
+            # Update estimates (run CAVI n_cavi times)
+            cavi_count = 0
+            while cavi_count < n_cavi:
+                self._update_q_z()
+                self._update_q_pi()
+                self._update_q_lam()
+                cavi_count += 1
 
-            self.tau_store[it_num,:,:] = self.tau
-            self.n_store[it_num,:] = self.n
-            self.alpha_store[it_num,:,:] = self.alpha
-            self.beta_store[it_num,:,:] = self.beta
+            # Store estimates
+            self.tau_store[it_num + 1,:,:] = self.tau
+            self.n_store[it_num + 1,:] = self.n
+            self.alpha_store[it_num + 1,:,:] = self.alpha
+            self.beta_store[it_num + 1,:,:] = self.beta
 
-# #%%
-# num_nodes = 60; num_groups = 2; T_max = 10; int_length=0.1
-# FCP = FullyConnectedPoissonNetwork(num_nodes, num_groups, T_max, np.array([[3, 1], [2, 5]]))
-# # sampled_network, groups_in_regions = FCP.sample_network(change_point=True, num_cps=1)
-# sampled_network, groups_in_regions = (
-#     FCP.sample_network(change_point=True, random_groups=False,
-#                        group_sizes=np.array([10,50]), num_cps=1)
-# )
-# change_node = FCP.changing_node
-# change_time = FCP.change_point_time
-
-# VB = VariationalBayes(sampled_network, num_nodes, num_groups, T_max, 
-#                       int_length, 
-#                       np.random.uniform(1,2,(num_groups,num_groups)), 
-#                       np.ones((num_groups,num_groups)),
-#                       np.array([(1/num_groups)*num_nodes] * num_groups),
-#                       simple=False)
-# VB.run_full_var_bayes()
-# #%%
-# import matplotlib.pyplot as plt
-# #%%
-# plt.plot(np.arange(int(T_max/int_length) - 1), VB.tau_store[:,change_node,1])
-#  # %%
-# VB.tau_store[50,:,:].mean(axis=0)
-# # %%
-
-# for j in range(3):
-#     plt.plot(np.arange(int(T_max/int_length) - 1),
-#           [VB.alpha_store[i,j,:] / VB.beta_store[i,j,:] for i in np.arange(int(T_max/int_length) - 1)])
-# # %%
+            # Update priors
+            self.tau_prior = self.tau.copy()
+            self.n_prior = self.n.copy()
+            self.alpha_prior = self.alpha.copy()
+            self.beta_prior = self.beta.copy()

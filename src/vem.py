@@ -3,8 +3,6 @@ import numpy as np
 from scipy.stats import norm
 from scipy.optimize import root
 
-from fully_connected_poisson import FullyConnectedPoissonNetwork
-
 class BaseVEM():
     
     def __init__(self, num_nodes, num_groups, T_max, sampled_network):
@@ -412,3 +410,5 @@ class TopHatVEM(BaseVEM):
 
         return (tau_store, pi_store, lam_store, group_preds_store)
 
+
+# %%
