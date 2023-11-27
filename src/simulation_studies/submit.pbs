@@ -1,0 +1,15 @@
+#bin/bash
+#PBS -N test
+#PBS be
+#PBS -o ${HOME}/online_networks/code/o_files/output.log
+#PBS -e ${HOME}/online_networks/code/e_files/error.log
+#PBS -q parallel16
+#PBS -t 0-14
+
+cd ${HOME}/online_networks/code
+export PYTHONPATH=${HOME}/online_networks/code
+
+source ../online_networks_venv/bin/activate
+
+python3 -u delta_effect_sim.py > "progress_output/test_output_$PBS_ARRAYID.out"
+
