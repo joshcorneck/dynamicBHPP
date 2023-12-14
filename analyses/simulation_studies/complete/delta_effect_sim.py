@@ -5,7 +5,9 @@ import os
 from variational_bayes import VariationalBayes
 
 # Use index for reading relevant arguments
-pbs_index = int(os.environ['PBS_ARRAY_INDEX'])
+pbs_index = int(os.environ['PBS_ARRAYID'])
+
+print(pbs_index)
 
 # Read in the relevant data from the array
 with open('simulation_parameters.txt', 'r') as file:
@@ -15,29 +17,33 @@ with open('simulation_parameters.txt', 'r') as file:
 num_nodes = int(data[0])
 num_groups = int(data[1])
 n_cavi = int(data[2])
-delta = float(data[3])
-int_length = float(data[4])
-T_max = float(data[5])
+delta_z = float(data[3])
+delta_pi = float(data[4])
+delta_lam = float(data[5])
+int_length = float(data[6])
+T_max = float(data[7])
 
 # Load the simulated data
 with open('sampled_network.pkl', 'rb') as f:
     sampled_network_full = pickle.load(f) 
 f.close()
 
+subset = False
 # Extract relevant data subset
-if num_nodes != 1000:
-    sampled_network = {}
+if subset:
+    if num_nodes != 1000:
+        sampled_network = {}
 
-    # Iterate over the first keys
-    for key in list(sampled_network_full.keys())[:num_nodes]:
-        # Extract the nested dictionary
-        inner_dict = sampled_network_full[key]
+        # Iterate over the first keys
+        for key in list(sampled_network_full.keys())[:num_nodes]:
+            # Extract the nested dictionary
+            inner_dict = sampled_network_full[key]
 
-        # Take only the first num_nodes
-        inner_dict_subset = {k: inner_dict[k] for k in list(inner_dict.keys())[:num_nodes]}
+            # Take only the first num_nodes
+            inner_dict_subset = {k: inner_dict[k] for k in list(inner_dict.keys())[:num_nodes]}
 
-        # Store the result in the new dictionary
-        sampled_network[key] = inner_dict_subset
+            # Store the result in the new dictionary
+            sampled_network[key] = inner_dict_subset
 else:
     sampled_network = sampled_network_full
 
@@ -47,7 +53,7 @@ VB = VariationalBayes(sampled_network, num_nodes, num_groups, T_max, int_length,
                       np.array([0.01] * num_groups ** 2).reshape((num_groups,num_groups)),
                       np.array([1/2, 1/2 + 0.01] * int(num_groups / 2)),
                       simple=False)
-VB.run_full_var_bayes(delta_z=delta, n_cavi=n_cavi)
+VB.run_full_var_bayes(delta_pi=delta_pi, delta_lam=delta_lam, delta_z=delta_z, n_cavi=n_cavi)
 
 # Save the output
 tau_store = VB.tau_store
