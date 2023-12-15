@@ -20,8 +20,6 @@ n_cavi = int(data[2])
 delta_z = int(data[3])
 delta_pi = int(data[4])
 delta_lam = int(data[5])
-int_length = float(data[6])
-T_max = int(data[7])
 
 # Load the simulated data
 with open('sampled_network.pkl', 'rb') as f:
@@ -53,17 +51,11 @@ np.fill_diagonal(sigma_init, 0)
 param_prior = np.array([1] * num_groups ** 2).reshape((num_groups, num_groups))
 
 # Run the VB algorithm
-VB = VariationalBayes(sampled_network, num_nodes, num_groups, T_max, int_length, 
-                      np.array([0.01] * num_groups ** 2).reshape((num_groups, num_groups)), 
-                      np.array([0.01] * num_groups ** 2).reshape((num_groups,num_groups)),
-                      np.array([1/2, 1/2 + 0.01] * int(num_groups / 2)),
-                      simple=False)
-VB = VariationalBayes(sampled_network, num_nodes, num_groups, T_max, 
-                      int_length, sigma_0=sigma_init,
+VB = VariationalBayes(sampled_network=sampled_network, num_nodes=num_nodes, 
+                      num_groups=num_groups, sigma_0=sigma_init,
                       eta_0=param_prior, zeta_0=param_prior, 
                       alpha_0=param_prior, beta_0=param_prior,
-                      n_0 = np.array([1/2 - 0.01, 1/2 + 0.01] * int(num_groups / 2)),
-                      simple=False)
+                      n_0 = np.array([1/2 - 0.01, 1/2 + 0.01] * int(num_groups / 2)))
 VB.run_full_var_bayes(n_cavi=n_cavi)
 
 # Save the output
