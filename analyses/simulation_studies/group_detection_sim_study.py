@@ -2,12 +2,13 @@ import numpy as np
 import pickle
 import os
 
-from variational_bayes import VariationalBayes
-from network_simulator import PoissonNetwork
-from plot_maker_functions import (posterior_rate_mean,
-                                  node_membership_probability,
-                                  posterior_adjacency_mean,
-                                  global_group_probability)
+from src.variational_bayes import VariationalBayes
+from src.network_simulator import PoissonNetwork
+from src.plotting_functions.plot_maker_functions import (
+                            posterior_rate_mean,
+                            node_membership_probability,
+                            posterior_adjacency_mean,
+                            global_group_probability)
 
 ###
 # STEP 1 - READ IN PARAMETERS
@@ -24,8 +25,8 @@ with open('sim_params.txt', 'r') as file:
 num_nodes = int(data[0])
 num_groups = int(data[1])
 n_cavi = int(data[2])
-delta_z = int(data[3])
-delta_pi = int(data[4])
+delta_pi = int(data[3])
+delta_rho = int(data[4])
 delta_lam = int(data[5])
 
 T_max = 100
@@ -36,7 +37,7 @@ lam_matrix = loaded_data['lam_mat']
 rho_matrix = loaded_data['rho_mat']
 group_sizes = loaded_data['group_sizes']
 rate_cp_times = loaded_data['change_point_times']
-num_rate_cps = len(change_point_times)
+num_rate_cps = len(rate_cp_times)
 
 ###
 # STEP 2 - SIMULATE A NETWORK
@@ -59,12 +60,19 @@ param_prior = np.array([1] * num_groups ** 2).reshape((num_groups, num_groups))
 ###
 
 # Run the VB algorithm
-VB = VariationalBayes(sampled_network=sampled_network, num_nodes=num_nodes, 
-                      num_groups=num_groups, sigma_0=sigma_init,
-                      eta_0=param_prior, zeta_0=param_prior, 
-                      alpha_0=param_prior, beta_0=param_prior,
+VB = VariationalBayes(sampled_network=sampled_network, 
+                      num_nodes=num_nodes, 
+                      num_groups=num_groups, 
+                      sigma_0=sigma_init,
+                      eta_0=param_prior, 
+                      zeta_0=param_prior, 
+                      alpha_0=param_prior, 
+                      beta_0=param_prior,
                       n_0 = np.array([1/2 - 0.01, 1/2 + 0.01] * int(num_groups / 2)))
-VB.run_full_var_bayes(n_cavi=n_cavi)
+VB.run_full_var_bayes(delta_pi=delta_pi,
+                      delta_rho=delta_rho,
+                      delta_lam=delta_lam,
+                      n_cavi=n_cavi)
 
 ###
 # STEP 4 - SAVE NETWORK AND INFERRED PARAMETERS
@@ -115,7 +123,30 @@ with open(f'output/zeta_store_{pbs_index}.pkl','wb') as f:
     pickle.dump(zeta_store, f)
 f.close()
 
+KL_div = VB.KL_div
+with open(f'output/KL_div_{pbs_index}.pkl','wb') as f:
+    pickle.dump(KL_div, f)
+f.close()
+
 ###
 # STEP 5 - PRODUCE AND SAVE PLOTS
 ###
-# posterior_rate_mean(num_groups, alpha_store[])
+
+posterior_rate_mean(num_groups=num_groups,
+                    alpha=alpha_store,
+                    beta=beta_store,
+                    true_rates=lam_matrix,
+                    file_path=f'output/plots/posterior_rates_{pbs_index}')
+
+# if change_node:
+#     node_membership_probability()
+
+posterior_adjacency_mean(num_groups=num_groups,
+                         eta=eta_store,
+                         zeta=zeta_store,
+                         true_con_prob=rho_matrix,
+                         file_path=f'output/plots/posterior_adjacency_{pbs_index}')
+
+global_group_probability(n=n_store,
+                         true_pi=group_sizes/group_sizes.sum(),
+                         file_path=f'output/plots/posterior_group_prob_{pbs_index}')
