@@ -1,6 +1,6 @@
 from typing import Dict
 import numpy as np
-from scipy.special import gamma, digamma, logsumexp
+from scipy.special import gammaln, digamma, logsumexp
 
 class VariationalBayes:
 
@@ -197,7 +197,7 @@ class VariationalBayes:
             - a2, b2: the rate and scale of the approx posterior from t.
         """
         return (
-            a2 * np.log(b1 / b2) - np.log(gamma(a1) / gamma(a2)) +
+            a2 * np.log(b1 / b2) - gammaln(a1) + gammaln(a2) +
             (a1 - a2) * digamma(a1) - (b1 - b2) * a1 / b1
         )
 
@@ -242,7 +242,7 @@ class VariationalBayes:
         self.KL_div = np.zeros((len(self.intervals), self.num_groups, self.num_groups))
 
         for it_num, update_time in enumerate(self.intervals):
-            print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...")
+            print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...", end='\r')
 
             self._compute_eff_count(update_time)
 
@@ -266,6 +266,9 @@ class VariationalBayes:
                                                     self.beta_store[it_num,i,j],
                                                     self.beta[i,j]
                                                     )
+            
+            # Flag if CP has occurred
+            
 
             # Store estimates
             self.tau_store[it_num + 1,:,:] = self.tau
