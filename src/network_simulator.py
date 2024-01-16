@@ -182,7 +182,15 @@ class PoissonNetwork(BaseNetwork):
         Currently this only has functionality to randomly change one of the entries 
         according to a normal distribution centred at that value with s.d. sigma.
         """
+        ### TO DELETE ###
+        #               #
 
+        
+        self.lam_matrices = []
+        self.lam_matrices.append(self.lam_matrix)
+        
+        #               #
+        ### TO DELETE ###
         if self.rate_change:
             self.lam_matrices = []
             self.lam_matrices.append(self.lam_matrix)
@@ -270,7 +278,7 @@ class PoissonNetwork(BaseNetwork):
                                         num_mem_cps, num_rate_cps)
         groups_in_regions = self._create_node_memberships(group_sizes, group_assignment_type,
                                                           changing_nodes)
-        self._create_rate_matrices(sigma=1)
+        self._create_rate_matrices(sigma=2)
 
 
         ###
