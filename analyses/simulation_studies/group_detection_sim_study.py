@@ -4,11 +4,11 @@ import os
 
 from src.variational_bayes import VariationalBayes
 from src.network_simulator import PoissonNetwork
-from src.plotting_functions.plot_maker_functions import (
-                            posterior_rate_mean,
-                            node_membership_probability,
-                            posterior_adjacency_mean,
-                            global_group_probability)
+# from src.plotting_functions.plot_maker_functions import (
+#                             posterior_rate_mean,
+#                             node_membership_probability,
+#                             posterior_adjacency_mean,
+#                             global_group_probability)
 
 ###
 # STEP 1 - READ IN PARAMETERS
@@ -23,11 +23,12 @@ with open('sim_params.txt', 'r') as file:
     data = lines[pbs_index].split()
 
 num_nodes = int(data[0])
-num_groups = int(data[1])
-n_cavi = int(data[2])
-delta_pi = int(data[3])
-delta_rho = int(data[4])
-delta_lam = int(data[5])
+num_groups_sim = int(data[1])
+num_groups_alg = int(data[2])
+n_cavi = int(data[3])
+delta_pi = float(data[4])
+delta_rho = float(data[5])
+delta_lam = float(data[6])
 
 T_max = 100
 
@@ -39,21 +40,30 @@ group_sizes = loaded_data['group_sizes']
 rate_cp_times = loaded_data['change_point_times']
 num_rate_cps = len(rate_cp_times)
 
+# If we want to specify rate changes
+# lam_matrices = np.load('lam_matrices.npy', allow_pickle=True)
+
 ###
 # STEP 2 - SIMULATE A NETWORK
 ###
-PN = PoissonNetwork(num_nodes, num_groups, T_max,
+PN = PoissonNetwork(num_nodes, num_groups_sim, T_max,
                 rho_matrix=rho_matrix, lam_matrix=lam_matrix)
 sampled_network, groups_in_regions = (
     PN.sample_network(group_sizes=group_sizes,
                     rate_change=True,
                     num_rate_cps=num_rate_cps,
                     rate_change_times=rate_cp_times))
+# sampled_network, groups_in_regions = (
+#     PN.sample_network(group_sizes=group_sizes,
+#                     rate_change=True,
+#                     num_rate_cps=len(np.arange(30, 100, 0.25))))
 
 # Parameter initialisations
-sigma_init = np.random.uniform(0,1,num_nodes ** 2).reshape((num_nodes,num_nodes))
+sigma_init = (np.random.uniform(0,1,num_nodes ** 2).
+              reshape((num_nodes,num_nodes)))
 np.fill_diagonal(sigma_init,0)
-param_prior = np.array([1] * num_groups ** 2).reshape((num_groups, num_groups))
+param_prior = (np.array([1] * num_groups_alg ** 2).
+                reshape((num_groups_alg, num_groups_alg)))
 
 ###
 # STEP 3 - RUN THE INFERENCE
@@ -62,13 +72,13 @@ param_prior = np.array([1] * num_groups ** 2).reshape((num_groups, num_groups))
 # Run the VB algorithm
 VB = VariationalBayes(sampled_network=sampled_network, 
                       num_nodes=num_nodes, 
-                      num_groups=num_groups, 
+                      num_groups=num_groups_alg, 
                       sigma_0=sigma_init,
                       eta_0=param_prior, 
                       zeta_0=param_prior, 
                       alpha_0=param_prior, 
                       beta_0=param_prior,
-                      n_0 = np.array([1/2 - 0.01, 1/2 + 0.01] * int(num_groups / 2)))
+                      n_0 = np.array([1/2] * int(num_groups_alg)))
 VB.run_full_var_bayes(delta_pi=delta_pi,
                       delta_rho=delta_rho,
                       delta_lam=delta_lam,
@@ -128,25 +138,25 @@ with open(f'output/KL_div_{pbs_index}.pkl','wb') as f:
     pickle.dump(KL_div, f)
 f.close()
 
-###
-# STEP 5 - PRODUCE AND SAVE PLOTS
-###
+# ###
+# # STEP 5 - PRODUCE AND SAVE PLOTS
+# ###
 
-posterior_rate_mean(num_groups=num_groups,
-                    alpha=alpha_store,
-                    beta=beta_store,
-                    true_rates=lam_matrix,
-                    file_path=f'output/plots/posterior_rates_{pbs_index}')
+# posterior_rate_mean(num_groups=num_groups,
+#                     alpha=alpha_store,
+#                     beta=beta_store,
+#                     true_rates=lam_matrix,
+#                     file_path=f'output/plots/posterior_rates_{pbs_index}')
 
-# if change_node:
-#     node_membership_probability()
+# # if change_node:
+# #     node_membership_probability()
 
-posterior_adjacency_mean(num_groups=num_groups,
-                         eta=eta_store,
-                         zeta=zeta_store,
-                         true_con_prob=rho_matrix,
-                         file_path=f'output/plots/posterior_adjacency_{pbs_index}')
+# posterior_adjacency_mean(num_groups=num_groups,
+#                          eta=eta_store,
+#                          zeta=zeta_store,
+#                          true_con_prob=rho_matrix,
+#                          file_path=f'output/plots/posterior_adjacency_{pbs_index}')
 
-global_group_probability(n=n_store,
-                         true_pi=group_sizes/group_sizes.sum(),
-                         file_path=f'output/plots/posterior_group_prob_{pbs_index}')
+# global_group_probability(n=n_store,
+#                          true_pi=group_sizes/group_sizes.sum(),
+#                          file_path=f'output/plots/posterior_group_prob_{pbs_index}')

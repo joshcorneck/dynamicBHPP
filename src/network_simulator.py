@@ -1,7 +1,7 @@
-#%%
 import numpy as np
 from more_itertools import flatten
 from abc import ABC, abstractmethod
+from typing import Dict
 
 class BaseNetwork(ABC):
 
@@ -71,11 +71,60 @@ class PoissonNetwork(BaseNetwork):
         self.mem_change = mem_change
         self.rate_change = rate_change
 
+        # CASE 1: rate and mem changes
         if mem_change & rate_change:
-            raise ValueError("Currently there is only functionality for one type of change.")
+            # Sample mem change times
+            if mem_change_times is None:
+                if num_mem_cps == 0:
+                    raise ValueError("Please supply a non-zero integer for num_mem_cps")
+                else:
+                    self.num_mem_cps = num_mem_cps
 
-        # Ensure we have a list of memership/rate change point times if needed.
-        if mem_change:
+                    self.mem_change_point_times = np.random.uniform(low=0, high=self.T_max, 
+                                                    size=num_mem_cps)
+            else:
+                self.num_mem_cps = num_mem_cps
+                self.mem_change_point_times = mem_change_times
+            self.mem_change_point_times.sort()
+            
+            # Sample rate change times
+            if rate_change_times is None:
+                if num_rate_cps == 0:
+                    raise ValueError("Please supply a non-zero integer for num_rate_cps")
+                else:
+                    self.num_rate_cps = num_rate_cps
+                    self.rate_change_point_times = np.random.uniform(low=0, high=self.T_max, 
+                                                    size=num_rate_cps)
+            else:
+                self.num_rate_cps = num_rate_cps
+                self.rate_change_point_times = rate_change_times
+            self.rate_change_point_times.sort()
+
+            # Create an array of complete change times. Contains an additional row
+            # with 0 for mem and 1 for rate.
+            source_indicator = np.concatenate((
+                np.zeros_like(self.mem_change_point_times),
+                np.ones_like(self.rate_change_point_times)
+                )
+            )
+            full_cp_times = np.concatenate(
+                (self.mem_change_point_times,
+                 self.rate_change_point_times
+                )
+            )
+            sort_indices = np.argsort(full_cp_times)
+            sorted_full_cp_times = full_cp_times[sort_indices]
+            sorted_source_indicator = source_indicator[sort_indices]
+
+            full_cp_times_indicator = np.vstack(
+                (sorted_full_cp_times,
+                 sorted_source_indicator)
+            )
+            self.full_cp_times = full_cp_times_indicator
+            
+
+        # CASE 2: mem but not rate changes
+        elif (mem_change & (not rate_change)):
             if mem_change_times is None:
                 if num_mem_cps == 0:
                     raise ValueError("Please supply a non-zero integer for num_mem_cps")
@@ -89,7 +138,8 @@ class PoissonNetwork(BaseNetwork):
                 self.mem_change_point_times = mem_change_times
             self.mem_change_point_times.sort()
         
-        if rate_change:
+        # CASE 3: rate but not mem changes
+        elif (rate_change & (not mem_change)):
             if rate_change_times is None:
                 if num_rate_cps == 0:
                     raise ValueError("Please supply a non-zero integer for num_rate_cps")
@@ -103,7 +153,7 @@ class PoissonNetwork(BaseNetwork):
             self.rate_change_point_times.sort()
 
     def _create_node_memberships(self, group_sizes: list, group_assignment_type: str,
-                                 changing_nodes: np.array):
+                                 mem_change_nodes: np.array):
         """
         Method to create a list of numpy arrays that give the membership of each node.
         This will be of length num_mem_cps + 1.
@@ -165,11 +215,11 @@ class PoissonNetwork(BaseNetwork):
             groups_cps = groups.copy()
             # Iterate over change points
             for cp in range(self.num_mem_cps):
-                old_group = groups_cps[changing_nodes[cp]]
+                old_group = groups_cps[mem_change_nodes[cp]]
                 new_group = old_group
                 while new_group == old_group:
                     new_group = np.random.randint(0,self.num_groups)
-                groups_cps[changing_nodes[cp]] = new_group 
+                groups_cps[mem_change_nodes[cp]] = new_group 
                 groups_in_regions.append(groups_cps.copy())
 
             return groups_in_regions
@@ -177,31 +227,25 @@ class PoissonNetwork(BaseNetwork):
         else:
             return groups
         
-    def _create_rate_matrices(self, sigma: float):
+    def _create_rate_matrices(self, sigma: float, entries_to_change: list):
         """
         Currently this only has functionality to randomly change one of the entries 
         according to a normal distribution centred at that value with s.d. sigma.
         """
-        ### TO DELETE ###
-        #               #
-
-        
-        self.lam_matrices = []
-        self.lam_matrices.append(self.lam_matrix)
-        
-        #               #
-        ### TO DELETE ###
         if self.rate_change:
             self.lam_matrices = []
             self.lam_matrices.append(self.lam_matrix)
 
             for i in range(self.num_rate_cps):
-                entry_to_change = np.random.randint(low=0, high=self.num_groups, size=2)
+                if entries_to_change is None:
+                    changing_idx = np.random.randint(low=0, high=self.num_groups, size=2)
+                else: 
+                    changing_idx = entries_to_change[i]
                 new_rate = np.abs(np.random.normal(
-                    loc=self.lam_matrix[entry_to_change[0], entry_to_change[1]],
+                    loc=self.lam_matrix[changing_idx[0], changing_idx[1]],
                     scale=sigma))
                 new_rate_matrix = self.lam_matrices[i].copy()
-                new_rate_matrix[entry_to_change[0], entry_to_change[1]] = new_rate
+                new_rate_matrix[changing_idx[0], changing_idx[1]] = new_rate
                 self.lam_matrices.append(new_rate_matrix)
         else:
             pass
@@ -254,8 +298,9 @@ class PoissonNetwork(BaseNetwork):
     def sample_network(self, rate_change: bool = False, mem_change: bool = False, 
                         num_rate_cps: int = 0, num_mem_cps: int = 0,
                         group_assignment_type: str = 'sequential', group_sizes: np.array = None, 
-                        mem_change_times: np.array = None, rate_change_times: np.array = None, 
-                        changing_nodes: np.array = None) -> dict(dict()):
+                        mem_change_times: np.array = None, mem_change_nodes: np.array = None,
+                        rate_change_times: np.array = None, entries_to_change: list = None,
+                        rate_matrices: list[np.array] = None) -> Dict[int, Dict[int, list]]:
         """
         A method to sample the full network.
         Parameters:
@@ -267,23 +312,41 @@ class PoissonNetwork(BaseNetwork):
                                     can be any of "sequential",  "alternate" or "random".
             - group_sizes: the number of nodes in each group (must sum to num_nodes).
             - mem_change_point_times: the times of the changes (must have length equal to num_mem_cps).
-            - changing_nodes: the nodes that change at each change point (must have length equal to num_mem_cps).
+            - mem_change_nodes: the nodes that change at each change point (must have length equal to num_mem_cps).
+            - entries_to_change: the entry of the rate matrix that changes at each change point.
+            - rate_matrices: list of rate matrices.
         """
         ###
         # STEP 1
+        # Create change points and relevant matrices and/or changing nodes.
         ###
+        num_cps = num_mem_cps + num_rate_cps
 
-        # Create necessary node memberships and rate matrices.
-        self._create_change_point_times(mem_change, rate_change, mem_change_times, rate_change_times,
-                                        num_mem_cps, num_rate_cps)
+        # Checks
+        if entries_to_change is not None:
+            if len(entries_to_change) != num_rate_cps:
+                raise ValueError("Required that num_rate_cps matches the length of entries_to_change")
+        if rate_matrices is not None:
+            if len(rate_matrices) != (num_rate_cps + 1):
+                raise ValueError("Must supply a number of rate matrices to match num_rate_cps")
+        if mem_change_nodes is None:
+            mem_change_nodes = np.random.choice(np.arange(self.num_nodes),size=num_mem_cps,
+                                                replace=True)
+        # Create change point times
+        self._create_change_point_times(mem_change, rate_change, mem_change_times, 
+                                        rate_change_times, num_mem_cps, num_rate_cps)
         groups_in_regions = self._create_node_memberships(group_sizes, group_assignment_type,
-                                                          changing_nodes)
-        self._create_rate_matrices(sigma=2)
-
+                                                          mem_change_nodes)
+        # Create rate matrices
+        if rate_matrices is None:
+            self._create_rate_matrices(sigma=2, entries_to_change=entries_to_change)
+        else:
+            self.lam_matrices = rate_matrices
 
         ###
         # STEP 2
         ###
+            
         adjacency_matrix = self._sample_adjancency_matrix(groups_in_regions)
         self.adjacency_matrix = adjacency_matrix
 
@@ -301,7 +364,10 @@ class PoissonNetwork(BaseNetwork):
                 if self.adjacency_matrix[i,j] == 0:
                     network[i][j] = None
                 else:
-                    if self.mem_change:
+                    ###
+                    # MEMBERSHIP CHANGE
+                    ###
+                    if (mem_change & (not rate_change)):
                         # Run from start to first CP
                         # Map node i and j to their groups
                         group_i = groups_in_regions[0][i]
@@ -336,7 +402,10 @@ class PoissonNetwork(BaseNetwork):
                                     t_start=self.mem_change_point_times[num_mem_cps-1], 
                                     t_end=self.T_max)
                         )
-                    elif self.rate_change:
+                    ###
+                    # RATE CHANGE
+                    ###
+                    elif (rate_change & (not mem_change)):
                         # Run from start to first CP
                         # Map node i and j to their groups
                         group_i = groups_in_regions[i]
@@ -366,6 +435,66 @@ class PoissonNetwork(BaseNetwork):
                                     t_start=self.rate_change_point_times[num_rate_cps-1], 
                                     t_end=self.T_max)
                         )
+
+                    ###
+                    # MEMBERSHIP & RATE CHANGE
+                    ###
+                    elif (rate_change & mem_change):
+                        # Run from start to first CP
+                        # Map node i and j to their initial groups
+                        group_i = groups_in_regions[0][i]
+                        group_j = groups_in_regions[0][j]
+
+                        # Get current (initial) lam_matrix
+                        lam_matrix_curr = self.lam_matrices[0]
+
+                        network[i][j] += (
+                            self._sample_single_edge(lam_matrix_curr[group_i,group_j],
+                                    t_start=0, t_end=self.full_cp_times[0,0])
+                        )
+                        # Iterate over CPs
+                        cp_mem_track = 0; cp_rate_track = 0
+                        for cp in range(1, num_cps):
+                            cp_type = self.full_cp_times[1,cp]
+
+                            # Get current memberships or current 
+                            if cp_type == 0:
+                                cp_mem_track += 1
+                                group_i = groups_in_regions[cp_mem_track][i]
+                                group_j = groups_in_regions[cp_mem_track][j]
+                            elif cp_type == 1:
+                                cp_rate_track += 1
+                                lam_matrix_curr = self.lam_matrices[cp_rate_track]
+                            else:
+                                # ADD FUNCTIONALITY FOR SIMULTANEOUS SWITCHES
+                                cp_mem_track += 1
+                                cp_rate_track += 1
+
+                            if j == i:
+                                network[i][j] = None
+                            else:
+                                network[i][j] += (
+                                    self._sample_single_edge(lam_matrix_curr[group_i,group_j],
+                                            t_start=self.full_cp_times[0,cp-1], 
+                                            t_end=self.full_cp_times[0,cp])
+                                )
+
+                        # From the final change point to the end.
+                        if self.full_cp_times[1,-1] == 0:
+                            group_i = groups_in_regions[-1][i]
+                            group_j = groups_in_regions[-1][j]
+                        elif self.full_cp_times[1,-1] == 1:
+                            lam_matrix_curr = self.lam_matrices[-1]
+                        else:
+                            # ADD FUNCTIONALITY FOR SIMULTANEOUS SWITCHES
+                            pass
+                            
+                        network[i][j] += (
+                            self._sample_single_edge(lam_matrix_curr[group_i,group_j],
+                                    t_start=self.full_cp_times[0,-1], 
+                                    t_end=self.T_max)
+                        )
+
                     else:
                         # Map node i and j to their groups
                         group_i = groups_in_regions[i]
