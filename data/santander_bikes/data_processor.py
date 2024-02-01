@@ -1,3 +1,5 @@
+
+#%%
 #!/usr/bin/env python3
 ## Import files
 import glob
@@ -83,7 +85,7 @@ df['end_time'] = df['End Date'].transform(lambda x: datefy(x, start_date=start_d
 # - Sort by start time
 df = df.sort_values(by='start_time')
 # - Save the resulting DataFrame
-df[['start_id','end_id','start_time','end_time']].to_csv('santander_train.csv', sep=',', columns=None, header=True, index=False)
+df[['End Date', 'start_id','end_id','start_time','end_time']].to_csv('santander_train.csv', sep=',', columns=None, header=True, index=False)
 
 ## Preprocess all test data files
 # - Obtain all file names for test data
@@ -103,6 +105,9 @@ for file in files:
 		# Transform times to minutes since start of the recording period, and add small noise
 		df_test['start_time'] = df_test['Start Date'].transform(lambda x: datefy(x, start_date=start_date) / 60 + np.random.uniform())
 		df_test['end_time'] = df_test['End Date'].transform(lambda x: datefy(x, start_date=start_date) / 60 + np.random.uniform())
+		# Append all DataFrames in a list (only for selected columns)
+		list_dfs.append(df_test[['End Date', 'start_id','end_id','start_time','end_time']])
+
 	else:
 		## FORMAT: Number,Start date,Start station number,Start station,End date,End station number,End station,Bike number,Bike model,Total duration,Total duration (ms)
 		# Remove repairs
@@ -115,12 +120,16 @@ for file in files:
 		df_test['start_time'] = df_test['Start date'].transform(lambda x: datefy(x, start_date=start_date, date_split='-', invert_date=True) / 60 + np.random.uniform())
 		# Use the exact duration in milliseconds to obtain the end time in minutes
 		df_test['end_time'] = df_test['start_time'] + df_test['Total duration (ms)'] / 60 / 1000
-	# Append all DataFrames in a list (only for selected columns)
-	list_dfs.append(df_test[['start_id','end_id','start_time','end_time']])
+		df_test = df_test.rename(columns={'End date': 'End Date'})
+		# Append all DataFrames in a list (only for selected columns)
+		list_dfs.append(df_test[['End Date', 'start_id','end_id','start_time','end_time']])
 
 # - Concatenate all DataFrames into a unique DF, and sort by start time
 df_test = pd.concat(list_dfs, axis=0, ignore_index=True).sort_values(by='start_time')
+
 # - Save the resulting DataFrame
-df_test[['start_id','end_id','start_time','end_time']].to_csv('santander_test.csv', sep=',', columns=None, header=True, index=False)
+df_test[['End Date', 'start_id','end_id','start_time','end_time']].to_csv('santander_test.csv', sep=',', columns=None, header=True, index=False)
 # - Delete list of dataframes
 del list_dfs
+
+# %%

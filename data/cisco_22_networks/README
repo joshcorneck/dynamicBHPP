@@ -1,0 +1,462 @@
+
+Contents:
+
+* 22 disjoint graphs total, of network communication of distributed
+  applications, all de-identified (both IPs, ie the nodes in the
+  graph, and port numbers are mapped to integers).
+
+Citation information:
+
+"A Dataset of Networks of Computing Hosts", IWSPA 2022.
+Omid Madani, Sai Ankith Averineni, Shashidhar Gandham
+
+in addition to this README file please see the above paper for further
+information about the graphs, etc.
+
+* For the 20 graphs, in the "dir_20_graphs" directory, the edges are
+  collected over 4 days in two different months. For each day, several
+  consecutive hours are dumped. First day in January, other 3 days are
+  from March 2019. Statistics given below (see also the paper in
+  IWSPA 2022).
+
+* Another small graph, g21, in the "dir_g21_small_workload_with_gt"
+  directory, with a ground truth (gt) grouping, based on function of
+  the nodes (as well as using the hostnames). The edges are collected
+  over several hours, several days.
+
+* An extra graph, e1 or g22, in the "dir_g22_extra_graph_with_gt"
+  directory, also with a (candidate) ground truth grouping information
+  (again based on function of the nodes). The edges files are
+  collected from multiple days over several months over 2021 and 2022.
+
+* Please see below (and paper above) for further information on file
+ structure, some statistics, etc. Basic python code for reading the
+ graphs (and reporting misc statistics) and reading a ground truth
+ file also made available (read_graph.py and read_gt.py).
+
+----------------------------------
+
+
+* Edge file structure: each line has 4 columns and specifies the graph
+ (1st column), the client (or consumer) node, the server (or provider)
+ node, and a csv of port/protocol and number of packets observed for
+ that connection in that hour. In the example below, the first line is
+ an edge from graph g1, from node 1 to node 2 (node 2 is the server or
+ provider), where the (service) port used is 1 on protocol 6, 22
+ packets exchanged (note the actual port number is mapped to 1 here,
+ ie de-identified). There are other ports and protocols associated
+ with this edge (or conversation), including port 1 on protocol 17,
+ with 4 packets (1p17-4), port 2 on protocol 6 (2p6-12), etc. The 2nd
+ and 3rd lines below are from graph g2, each one specifying one port
+ and protocol.
+
+# Comment lines, if any,  begin with '#'
+#
+#
+# graph, client node id, server node id, csv of port, protocol, and number of packets.
+# 
+g1      1       2       1p6-22,1p17-4,2p6-12,3p6-12,4p6-12,5p6-12
+g2      1       2       1p6-625
+g2      3       4       1p17-4
+g1      3       4       6p6-38,7p6-92,8p6-37,9p6-26,10p6-113,11p6-33,12p6-160,13p6-165,14p6-61380,15p6-37,16p6-36,17p6-32,18p6-36,19p6-77,20p6-131
+g3      1       2       1p6-45
+g2      5       6       2p6-34
+...
+
+----------
+
+* Statistics on the 20 graphs: number of nodes, and edges, for the 20
+graphs collected over all files from the 4 days.  For example, graph
+g15 below has over 70k nodes, over 113k undirected edges, over 145k
+directed edges, and over 158k directed and port-differentiated
+edges. The paper cited above has the statistics for edges collected
+over day 1 and day 2 only.
+
+
+# graph, nodes, undirected edges, directed edges, port-differentiated-directed edges
+
+g4 278739 302034 302108 302595
+g2 157489 1864574 2158346 12377439
+g15 70172 113082 145369 158807
+g5 46298 56047 56773 68140
+g6 28329 106667 117865 380640
+g10 18414 37702 38675 148184
+g9 13717 26651 30398 83179
+g3 11555 43996 50447 173499
+g13 5290 20889 27383 100932
+g8 3389 14081 14227 42611
+g12 2454 4505 5223 67948
+g20 1487 2214 2287 2717
+g1 1447 106617 118691 1926968
+g17 596 997 1058 1475
+g14 575 880 944 26687
+g7 290 732 763 1080
+g18 289 501 505 918
+g16 238 314 324 465
+g11 207 1557 1587 1781
+g19 86 150 155 325
+
+* See further port statistics on these graphs below.
+
+-----------------------------
+
+
+* Statistics on the small graph (g21) with ground truth: number of
+nodes, and edges, for the small graph collected over all hours of
+several consecutive days are shown below (and further below for
+statistics matching Table 1 of the paper).
+
+When we run read_graph on the
+
+"dir_includes_packets_and_other_nodes" subdirectory.
+
+# Output of:
+
+python read_graphs.py \
+  dir_g21_small_workload_with_gt/dir_includes_packets_and_other_nodes
+
+...
+
+# Done reading from 96 file(s).
+
+Graph, num nodes, undirected edges, directed edges, port-differentiated-directed edges
+g21 317 1697 3025 10851
+
+
+* 59 of the nodes are in the groundtruth groups, although some of
+  these nodes may not appear in the graph (may not be active). Note:
+  those nodes (not all IPs) that were associated with a hostname and
+  had sensor were grouped.  There were just over 50 unique hostnames
+  (a few hostnames correspond to multiple nodes or IPs).
+
+* The groupings, and related information, are in the following files
+  below. Each line of a gt file is one group of nodes, a csv. Some
+  groups have one member (singletons). The groups in the file are
+  order by number of members (smaller groups first). There are 23
+  groups in the file groupings.gt.txt
+
+
+groupings.gt.txt  # Manual grouping based on hostname and function
+
+# 23 ground truth groups, their sizes sorted:
+
+# sizes: [7, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1]
+
+
+# This file contains prefix tree codes based on hostnames (see below
+# for description of prefix codes)
+
+prefix_codes.txt
+
+# grouping using above codes, requiring prefix length of 5 or more
+# (common prefixes).
+
+groupings.gt.viaPrefix5.txt
+
+# group sizes descending: [6, 5, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1]
+
+
+* (Subset of the nodes, those in ground truth) The directory
+"dir_small_workload_with_gt/dir_no_packets_etc/" has the edge files
+limited to nodes in the ground truth file (those files do not have
+packet info either). There are a few edge files, reflecting recording
+from a few hours to a few days.
+
+
+If we run read_graph.py on
+"dir_small_workload_with_gt/dir_no_packets_etc/" and report the port and
+degree stats, we get (matching Table 1 of the paper for g21):
+
+Graph, num nodes, undirected edges, directed edges, port-differentiated-directed edges
+g21 52 1282 2507 10564
+
+Graph=g21 num nodes=52, num undirected edges=1282
+(undirected) num nodes with degree 2+=51, median degree=50, max degree=51
+Num. of (unique service) ports in graph =2371, on 2+ edges=1398
+Num. nodes providing a port=52, 2+ ports=51 med=8 max=694
+Num. nodes client of a port=50, 2+ ports=50 med=13 max=1161
+Num. nodes with positive indegree and outdegree = 50
+Num. of self-arcs: 7
+Num. directed edges: 2507
+Num. of directed 2-cycles: 2450
+
+* Note that you can move a single edge file into its own directory to read
+it in isolation (the edge files in "dir_no_packets_etc/"  may overlap in time
+range or may contain one another )
+
+* A subdirectory of observed graphs when a subset of the original
+sensors are installed is included in "dir_no_packets_etc/" (a subset
+of the above graph is observed.. see also the short README in that directory)
+
+---------------------------------------------
+
+* Here we describe building and using prefix codes as a way of
+  grouping nodes based on similarity in hostname string (we are not
+  providing the hostnames). We are providing prefix code files for a
+  subset of the nodes (those with hostnames) for two graphs (g21
+  above, and e1 below).
+  
+Each node (IP) has a unique hostname. Two or more IPs can have the
+ same hostname in the groundtruth files provided.  Hostnames with the
+ same long prefixes correspond to nodes that perform the same
+ function, such as "launcher1" and "launcher2", both launching jobs
+ (they share a prefix of 8 characters long). A prefix tree is built
+ and for each hostname the statistics (eg number of nodes) along the
+ path in the tree that leads to that hostname is made into a code, and
+ nodes that share prefixes in this code space tend to be similar and
+ could be grouped together, while nodes with very different prefixes
+ are likely not similar.
+
+An example of how the prefix codes are built.  Say we have three nodes
+only with names "launcher1", "launcher2", and "manager". Then at the
+root of the tree there are two branches, branch 1, corresponding to
+prefix "launcher" (8 characters long), has 2 nodes in its subtree and
+branch 2, corresponding to "manager" leads to 1 node.  The prefix code
+for each of "launcher1" and "launcher2" begins with "b1l8s2", meaning
+branch 1 or b1, length 8 (prefix length of 8) or l8, and size 2 or s2
+(number of nodes), and launcher1 the full prefix code is
+"b1l8s2_b1l1s1" (the next prefix has length 1) and for "launcher2" it
+is "b1l8s2_b2l1s1" (an underscore character, '_', splits the code and
+corresponds to an split in the tree). For "manager" we get the
+complete code "b2l7s1" (branch 2, length 7, size 1). Branches are
+numbered by the decreasing order of number of nodes underneath them,
+so branch 1, "b1" leads to more nodes compared to "b2" (or at least as
+much), etc.
+
+
+--------------------------
+
+* One extra graph "e1" (or g22) from a workload of machines doing builds,
+  regression tests, etc. Thanks to Robert Simon in Cisco Secure
+  Workload for assisting us in getting this data. Note: This graph is not mentioned in the
+  paper.
+
+* Output from running:
+
+python read_graphs.py dir_g22_extra_graph_with_gt/dir_edges
+
+...
+
+# Done reading from 99 file(s).
+
+Graph, num nodes, undirected edges, directed edges, port-differentiated-directed edges
+e1 33241 689951 702361 785879
+
+* There were almost 300 unique hostnames and 486 nodes with hostnames
+  (see below). Note that several IPs (nodes) can correspond to the
+  same hostname.
+
+* One candidate groundtruth file, candidate_gt.minPrefix5.txt, based
+  on minimum prefix size of 5 characters, yields 10 groups (those
+  nodes that were associated with a hostname were grouped), with
+  statistics (largest group has 182 nodes in it, all nodes sharing
+  prefix of size 5):
+
+# number of groups:  10
+# Number of nodes in some ground truth group: 486
+
+# group sizes: [182, 145, 67, 54, 24, 5, 4, 3, 1, 1]
+
+* Degree and port-related statistics:
+
+Graph=e1 num nodes=33241, num undirected edges=689951
+(undirected) num nodes with degree 2+=28623, median degree=17, max degree=4030
+Num. of (unique service) ports in graph =2488, on 2+ edges=1857
+Num. nodes providing a port=18792, 2+ ports=7114 median=1 max=1105
+Num. nodes client of a port=27243, 2+ ports=25423 median=5 max=819
+Num. nodes with positive indegree and outdegree = 12794
+Num. of self-arcs: 0
+Num. directed edges: 702361
+Num. of directed 2-cycles: 24820
+
+
+--> Peeling: this graph is not very peelable compared to the other
+ graphs, meaning that removing degree 1 nodes and/or removing nodes
+ with high degree (once, or repeatedly), still leaves a large portion
+ of the nodes.  For instance, removing degree-1 nodes removes only 14%
+ of the graph. Similar results hold even if a few edge files are
+ read. The nodes connect to (are client of or provide services to)
+ multiple other nodes.
+
+--> Longevity (persistence): A tiny fraction of edges are seen in all
+ or the majority of the files. This is plausible: the jobs run on
+ different hours of the day (and possibly a different hour from one
+ day to next) and our hourly samples are also from different hours, so
+ a fraction of edges is observed from one file. Over a span of many
+ months, the workload can change too (new applications installed,
+ etc).
+
+
+--------------------------
+
+* Back to the 20 graphs. Number of unique (service) ports, and other
+related statistics, 20 graphs (day 1, day 2, day 3, day 4):
+
+
+# 1. g2, num uniqu ports=103907
+     1. g2, num uniqu ports > 1 = 94392
+     1. g2, top few [('2p6', 896712), ('3p6', 211728)]
+
+# 2. g14, num uniqu ports=24896
+     2. g14, num uniqu ports > 1 = 905
+     2. g14, top few [('4p6', 345), ('5p6', 63)]
+
+# 3. g12, num uniqu ports=16969
+     3. g12, num uniqu ports > 1 = 15768
+     3. g12, top few [('5p6', 1180), ('22p17', 814)]
+
+# 4. g1, num uniqu ports=16409
+     4. g1, num uniqu ports > 1 = 15039
+     4. g1, top few [('1p17', 60960), ('3p6', 54564)]
+
+# 5. g3, num uniqu ports=14754
+     5. g3, num uniqu ports > 1 = 10210
+     5. g3, top few [('2p17', 11608), ('3p6', 9279)]
+
+# 6. g6, num uniqu ports=7452
+     6. g6, num uniqu ports > 1 = 1619
+     6. g6, top few [('2p17', 42888), ('1p17', 39287)]
+
+# 7. g10, num uniqu ports=6329
+     7. g10, num uniqu ports > 1 = 4361
+     7. g10, top few [('2p17', 20669), ('1p17', 5159)]
+
+# 8. g5, num uniqu ports=4912
+     8. g5, num uniqu ports > 1 = 906
+     8. g5, top few [('2p17', 46832), ('1p6', 3532)]
+
+# 9. g13, num uniqu ports=3313
+     9. g13, num uniqu ports > 1 = 769
+     9. g13, top few [('5p6', 12702), ('8p17', 12158)]
+
+# 10. g9, num uniqu ports=2749
+     10. g9, num uniqu ports > 1 = 2029
+     10. g9, top few [('1p6', 10565), ('1p17', 7164)]
+
+# 11. g15, num uniqu ports=1413
+     11. g15, num uniqu ports > 1 = 1311
+     11. g15, top few [('11p17', 105102), ('12p17', 32134)]
+
+# 12. g8, num uniqu ports=449
+     12. g8, num uniqu ports > 1 = 151
+     12. g8, top few [('3p6', 8303), ('6p17', 4166)]
+
+# 13. g4, num uniqu ports=384
+     13. g4, num uniqu ports > 1 = 57
+     13. g4, top few [('1p6', 297015), ('1p17', 3747)]
+
+# 14. g7, num uniqu ports=156
+     14. g7, num uniqu ports > 1 = 33
+     14. g7, top few [('1p6', 516), ('4p6', 181)]
+
+# 15. g18, num uniqu ports=154
+     15. g18, num uniqu ports > 1 = 28
+     15. g18, top few [('1p17', 220), ('2p17', 204)]
+
+# 16. g17, num uniqu ports=116
+     16. g17, num uniqu ports > 1 = 55
+     16. g17, top few [('14p6', 381), ('1p17', 168)]
+
+# 17. g20, num uniqu ports=99
+     17. g20, num uniqu ports > 1 = 62
+     17. g20, top few [('2p6', 1339), ('5p17', 147)]
+
+# 18. g11, num uniqu ports=68
+     18. g11, num uniqu ports > 1 = 38
+     18. g11, top few [('5p6', 396), ('1p6', 348)]
+
+# 19. g16, num uniqu ports=63
+     19. g16, num uniqu ports > 1 = 44
+     19. g16, top few [('1p6', 49), ('2p17', 39)]
+
+# 20. g19, num uniqu ports=34
+     20. g19, num uniqu ports > 1 = 25
+     20. g19, top few [('3p17', 49), ('10p6', 47)]
+
+---------------------
+
+Number or unique ports, 20 graphs, day 1 and day 2 only (matches Table
+1 of the paper).
+
+# 1. g2, num uniqu ports=89168
+     1. g2, num uniqu ports > 1 = 69310
+     1. g2, top few [('2p6', 674262), ('3p6', 152180)]
+
+# 2. g12, num uniqu ports=15331
+     2. g12, num uniqu ports > 1 = 10856
+     2. g12, top few [('5p6', 1148), ('3p6', 554)]
+
+# 3. g1, num uniqu ports=14857
+     3. g1, num uniqu ports > 1 = 13966
+     3. g1, top few [('1p17', 59264), ('3p6', 52995)]
+
+# 4. g14, num uniqu ports=13355
+     4. g14, num uniqu ports > 1 = 201
+     4. g14, top few [('4p6', 311), ('5p6', 58)]
+
+# 5. g3, num uniqu ports=11741
+     5. g3, num uniqu ports > 1 = 9611
+     5. g3, top few [('2p17', 11287), ('3p6', 8918)]
+
+# 6. g10, num uniqu ports=5348
+     6. g10, num uniqu ports > 1 = 4259
+     6. g10, top few [('2p17', 14204), ('1p17', 4508)]
+
+# 7. g6, num uniqu ports=4211
+     7. g6, num uniqu ports > 1 = 680
+     7. g6, top few [('2p17', 36676), ('1p17', 33507)]
+
+# 8. g5, num uniqu ports=2837
+     8. g5, num uniqu ports > 1 = 418
+     8. g5, top few [('2p17', 46621), ('1p6', 2944)]
+
+# 9. g13, num uniqu ports=1283
+     9. g13, num uniqu ports > 1 = 307
+     9. g13, top few [('8p17', 8265), ('5p6', 8060)]
+
+# 10. g15, num uniqu ports=1246
+     10. g15, num uniqu ports > 1 = 974
+     10. g15, top few [('11p17', 65033), ('12p17', 17719)]
+
+# 11. g9, num uniqu ports=1206
+     11. g9, num uniqu ports > 1 = 870
+     11. g9, top few [('1p6', 8653), ('1p17', 6880)]
+
+# 12. g8, num uniqu ports=324
+     12. g8, num uniqu ports > 1 = 134
+     12. g8, top few [('3p6', 7298), ('6p17', 3472)]
+
+# 13. g4, num uniqu ports=287
+     13. g4, num uniqu ports > 1 = 54
+     13. g4, top few [('1p6', 173365), ('1p17', 1110)]
+
+# 14. g17, num uniqu ports=107
+     14. g17, num uniqu ports > 1 = 47
+     14. g17, top few [('14p6', 302), ('1p17', 160)]
+
+# 15. g7, num uniqu ports=102
+     15. g7, num uniqu ports > 1 = 31
+     15. g7, top few [('1p6', 385), ('4p6', 68)]
+
+# 16. g20, num uniqu ports=88
+     16. g20, num uniqu ports > 1 = 60
+     16. g20, top few [('2p6', 165), ('4p17', 143)]
+
+# 17. g16, num uniqu ports=61
+     17. g16, num uniqu ports > 1 = 44
+     17. g16, top few [('1p6', 41), ('1p17', 35)]
+
+# 18. g11, num uniqu ports=61
+     18. g11, num uniqu ports > 1 = 38
+     18. g11, top few [('5p6', 383), ('1p6', 348)]
+
+# 19. g18, num uniqu ports=34
+     19. g18, num uniqu ports > 1 = 19
+     19. g18, top few [('1p17', 218), ('2p17', 194)]
+
+# 20. g19, num uniqu ports=32
+     20. g19, num uniqu ports > 1 = 24
+     20. g19, top few [('3p17', 45), ('10p6', 37)]
+
+---------------------------------------------
+

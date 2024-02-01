@@ -1,7 +1,7 @@
 import numpy as np
 from more_itertools import flatten
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, List
 
 class BaseNetwork(ABC):
 
@@ -152,6 +152,7 @@ class PoissonNetwork(BaseNetwork):
                 self.rate_change_point_times = rate_change_times
             self.rate_change_point_times.sort()
 
+
     def _create_node_memberships(self, group_sizes: list, group_assignment_type: str,
                                  mem_change_nodes: np.array):
         """
@@ -300,7 +301,7 @@ class PoissonNetwork(BaseNetwork):
                         group_assignment_type: str = 'sequential', group_sizes: np.array = None, 
                         mem_change_times: np.array = None, mem_change_nodes: np.array = None,
                         rate_change_times: np.array = None, entries_to_change: list = None,
-                        rate_matrices: list[np.array] = None) -> Dict[int, Dict[int, list]]:
+                        rate_matrices: List[np.array] = None) -> Dict[int, Dict[int, list]]:
         """
         A method to sample the full network.
         Parameters:

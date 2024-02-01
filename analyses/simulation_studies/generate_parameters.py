@@ -5,9 +5,10 @@ import itertools
 
 # Simulation arrays
 lam_mat = np.array([[5., 3.], [2., 8.]])
-rho_mat = np.array([[0.6, 0.1], [0.2, 0.7]])
+rho_mat = np.array([[1, 1], [1, 1]])
 group_sizes = np.array([300, 200])
-change_point_times = np.array([40, 50, 60])
+change_point_times = np.array([30])
+mem_change_nodes = np.array([10])
 
 # lam_matrices = []
 # lam_matrices.append(lam_mat)
@@ -25,21 +26,25 @@ change_point_times = np.array([40, 50, 60])
 
 np.savez('analyses/simulation_studies/sim_mats.npz', 
          lam_mat=lam_mat, rho_mat=rho_mat, group_sizes=group_sizes,
-         change_point_times=change_point_times)
+         change_point_times=change_point_times,
+         changing_nodes=mem_change_nodes)
 # np.save('analyses/simulation_studies/lam_matrices.npy', lam_matrices)
 
 num_nodes_set = [500]
 num_groups_sim_set = [2]
-num_groups_alg_set = [2, 3, 4, 5]
+num_groups_alg_set = [2]
 n_cavi_set = [2]
-delta_pi_set = [1]
+int_length_set = [1, 0.1, 0.01]
+delta_z_set = [1, 0.1]
+delta_pi_set = [1, 0.1]
 delta_rho_set = [1]
-delta_lam_set = [1e-1, 1e-3]
+delta_lam_set = [1, 0.1]
 
 all_combinations = list(
     itertools.product(num_nodes_set, num_groups_sim_set, 
-                      num_groups_alg_set, n_cavi_set,
-                      delta_pi_set, delta_rho_set, delta_lam_set)
+                      num_groups_alg_set, n_cavi_set, int_length_set,
+                      delta_z_set, delta_pi_set, delta_rho_set, 
+                      delta_lam_set)
 )
 
 with open('analyses/simulation_studies/sim_params.txt', 'w') as file:
@@ -49,4 +54,12 @@ with open('analyses/simulation_studies/sim_params.txt', 'w') as file:
 
 print(len(all_combinations))
 
+df_combs = pd.DataFrame(all_combinations, 
+                        columns=['num_nodes', 'num_groups_sim', 
+                                'num_groups_alg', 'n_cavi',
+                                'int_length', 'delta_z',
+                                'delta_pi', 'delta_rho',
+                                'delta_lam'])
+df_combs.to_pickle('analyses/simulation_studies/df_sim_params.pkl')
 # %%
+
