@@ -10,9 +10,10 @@ group_sizes = np.array([300, 200])
 change_point_times = np.array([30])
 mem_change_nodes = np.array([10])
 
-# lam_matrices = []
-# lam_matrices.append(lam_mat)
-# lam_mat_temp = lam_mat.copy()
+lam_matrices = []
+lam_matrices.append(lam_mat)
+lam_matrices.append(np.array([[8., 2.], [3., 5.]]))
+
 
 # base_val_00 = lam_mat_temp[0,0]
 # base_val_11 = lam_mat_temp[1,1]
@@ -24,21 +25,24 @@ mem_change_nodes = np.array([10])
 
 # change_point_times = np.arange(30,100,0.25)
 
+# np.savez('analyses/simulation_studies/sim_mats.npz', 
+#          lam_mat=lam_mat, rho_mat=rho_mat, group_sizes=group_sizes,
+#          change_point_times=change_point_times,
+#          changing_nodes=mem_change_nodes)
 np.savez('analyses/simulation_studies/sim_mats.npz', 
          lam_mat=lam_mat, rho_mat=rho_mat, group_sizes=group_sizes,
-         change_point_times=change_point_times,
-         changing_nodes=mem_change_nodes)
-# np.save('analyses/simulation_studies/lam_matrices.npy', lam_matrices)
+         change_point_times=change_point_times)
+np.save('analyses/simulation_studies/lam_matrices.npy', lam_matrices)
 
 num_nodes_set = [500]
 num_groups_sim_set = [2]
 num_groups_alg_set = [2]
 n_cavi_set = [2]
-int_length_set = [1, 0.1, 0.01]
-delta_z_set = [1, 0.1]
+int_length_set = [1]
+delta_z_set = [1]
 delta_pi_set = [1, 0.1]
 delta_rho_set = [1]
-delta_lam_set = [1, 0.1]
+delta_lam_set = [0.1]
 
 all_combinations = list(
     itertools.product(num_nodes_set, num_groups_sim_set, 
@@ -60,6 +64,6 @@ df_combs = pd.DataFrame(all_combinations,
                                 'int_length', 'delta_z',
                                 'delta_pi', 'delta_rho',
                                 'delta_lam'])
-df_combs.to_pickle('analyses/simulation_studies/df_sim_params.pkl')
+# df_combs.to_pickle('analyses/simulation_studies/df_sim_params.pkl')
 # %%
 

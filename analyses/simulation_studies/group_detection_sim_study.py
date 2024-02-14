@@ -39,15 +39,15 @@ loaded_data = np.load('sim_mats.npz')
 lam_matrix = loaded_data['lam_mat']
 rho_matrix = loaded_data['rho_mat']
 group_sizes = loaded_data['group_sizes']
-mem_cp_times = loaded_data['change_point_times']
-mem_change_nodes = loaded_data['changing_nodes']
-num_mem_cps = len(mem_cp_times)
-# rate_cp_times = loaded_data['change_point_times']
-# num_rate_cps = len(rate_cp_times)
+# mem_cp_times = loaded_data['change_point_times']
+# mem_change_nodes = loaded_data['changing_nodes']
+# num_mem_cps = len(mem_cp_times)
+rate_cp_times = loaded_data['change_point_times']
+num_rate_cps = len(rate_cp_times)
 
 
 # If we want to specify rate changes
-# lam_matrices = np.load('lam_matrices.npy', allow_pickle=True)
+lam_matrices = np.load('lam_matrices.npy', allow_pickle=True)
 
 ###
 # STEP 2 - SIMULATE A NETWORK
@@ -55,21 +55,22 @@ num_mem_cps = len(mem_cp_times)
 PN = PoissonNetwork(num_nodes, num_groups_sim, T_max,
                 rho_matrix=rho_matrix, lam_matrix=lam_matrix)
 
-## RATE CHANGE POINTS
-# sampled_network, groups_in_regions = (
-#     PN.sample_network(group_sizes=group_sizes,
-#                     rate_change=True,
-#                     num_rate_cps=num_rate_cps,
-#                     rate_change_times=rate_cp_times))
-
-# MEMBERSHIP CHANGE POINTS
+# RATE CHANGE POINTS
 sampled_network, groups_in_regions = (
     PN.sample_network(group_sizes=group_sizes,
-                    mem_change=True,
-                    num_mem_cps=num_mem_cps,
-                    mem_change_times=mem_cp_times,
-                    mem_change_nodes=mem_change_nodes))
+                    rate_change=True,
+                    num_rate_cps=num_rate_cps,
+                    rate_change_times=rate_cp_times))
 adj_mat = PN.adjacency_matrix
+
+# # MEMBERSHIP CHANGE POINTS
+# sampled_network, groups_in_regions = (
+#     PN.sample_network(group_sizes=group_sizes,
+#                     mem_change=True,
+#                     num_mem_cps=num_mem_cps,
+#                     mem_change_times=mem_cp_times,
+#                     mem_change_nodes=mem_change_nodes))
+# adj_mat = PN.adjacency_matrix
 
 # sampled_network, groups_in_regions = (
 #     PN.sample_network(group_sizes=group_sizes,
@@ -111,7 +112,8 @@ VB = VariationalBayes(sampled_network=sampled_network,
                       num_groups=num_groups_alg, 
                       alpha_0=param_prior, 
                       beta_0=param_prior,
-                      gamma_0 = np.array([1/2 - 0.01, 1/2 + 0.01]),
+                      gamma_0 = np.random.uniform(low=0.1, high=0.3, 
+                                              size=int(num_groups_alg)),
                       adj_mat=adj_mat,
                       int_length=int_length,
                       T_max=T_max)

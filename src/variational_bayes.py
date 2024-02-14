@@ -406,3 +406,77 @@ class VariationalBayes:
             self.tau_prior = self.tau.copy()
             self.alpha_prior = self.alpha.copy()
             self.beta_prior = self.beta.copy()
+
+
+class VariationalBayesGEM:
+
+    def __init__(self, sampled_network: Dict[int, Dict[int, list]], 
+                 num_nodes: int, alpha_0: np.array, beta_0: np.array, 
+                 nu_0: np.array, adj_mat: np.array=None, 
+                 int_length: float=1, T_max: float=100) -> None:
+        """
+        A class to run a full variational Bayesian inference procedure for a network
+        point process with latent group structure. Parameters:
+            - sampled_network: the network of point patterns. This should be a dictionary
+                               of dictionaries, where the key of the outer dictionary is
+                               the source node, with value being another dictionary with
+                               key as destination node and value a list of arrival times.
+            - num_nodes: number of nodes in the network.
+            - alpha_0, beta_0, nu_0: initial hyperparameter values.
+            - adj_mat: adjacency matrix of the network. 
+            - int_length: the time between updates.
+            - T_max: the upper bound of the full observation window (assuming starting 
+                     from 0).
+        """      
+        self.adj_mat = adj_mat
+
+        # Network parameters
+        self.num_nodes = num_nodes
+        self.T_max = T_max; self.sampled_network = sampled_network
+
+        # Sampling
+        self.intervals = np.arange(int_length, T_max, int_length)
+        self.int_length = int_length
+
+        self.alpha_prior = alpha_0
+        self.beta_prior = beta_0
+        self.gamma_prior = nu_0
+
+        self.eff_count = np.zeros((self.num_nodes, self.num_nodes))
+        self.eff_obs_time = np.zeros((self.num_nodes, self.num_nodes))
+        self.eff_obs_time.fill(self.int_length)
+
+    def _compute_eff_count(self, update_time: float):
+        """
+        A method to compute the effective count on each edge. This is simply 
+        the number of observations on an edge from update_time - int_length to
+        update_time. Parameters:
+            - update_time: time at which we run the update.  
+        """
+        for i in range(self.num_nodes):
+            for j in range(self.num_nodes):
+                if self.sampled_network[i][j] is not None:
+                    np_edge = np.array(
+                        self.sampled_network[i][j]
+                    )
+                    self.eff_count[i,j] = (
+                        len(
+                            np_edge[
+                                (update_time-self.int_length <= np_edge)
+                                &
+                                (np_edge < update_time)
+                            ]
+                        )
+                    )
+    
+    def _update_q_z(self):
+        pass
+
+    def _update_q_lam(self):
+        pass
+
+    def _update_q_u(self):
+        pass
+
+    def run_full_var_bayes(self):
+        pass
