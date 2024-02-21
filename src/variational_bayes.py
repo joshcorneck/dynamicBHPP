@@ -10,7 +10,8 @@ class VariationalBayes:
                  infer_graph_bool: bool=False, sigma_0: np.array=None, eta_0: np.array=None, 
                  zeta_0: np.array=None, est_num_groups_bool: bool=False, burn_in: int=None,
                  num_var_groups: int=None, alpha: float=None, beta: float=None,
-                 nu: float=None, int_length: float=1, T_max: float=100) -> None:
+                 nu: float=None, int_length: float=1, T_max: float=100,
+                 random=False) -> None:
         
         """
         A class to run a full variational Bayesian inference procedure for a network
@@ -35,7 +36,7 @@ class VariationalBayes:
             - T_max: the upper bound of the full observation window (assuming starting 
                      from 0).
         """
-        # Run necessary checks on inputs
+        ## Run necessary checks on inputs
         if (adj_mat is not None) & (infer_graph_bool):
             raise ValueError("""You can't supply an adjacency matrix and set
                             infer_graph_bool = True.""")
@@ -43,7 +44,9 @@ class VariationalBayes:
             raise ValueError("""You must supply an adjacency matrix if
                             infer_graph_bool = False.""")
         if (adj_mat is not None) & (not infer_graph_bool):
-            if adj_mat.shape != (num_nodes,num_nodes):
+            if est_num_groups_bool:
+                pass
+            elif adj_mat.shape != (num_nodes,num_nodes):
                 raise ValueError("""The shape of the supplied adjacency
                                  matrix must match the number of nodes.""")
         if est_num_groups_bool:
@@ -77,34 +80,26 @@ class VariationalBayes:
         if adj_mat is not None:
             self.adj_mat = adj_mat
         
-        # Booleans
+        ## Booleans
         self.infer_graph_bool = infer_graph_bool
         self.est_num_groups_bool = est_num_groups_bool
 
-        # Network parameters
+        ## Network parameters
         self.num_nodes = num_nodes; self.num_groups = num_groups
         self.T_max = T_max; self.sampled_network = sampled_network
-
-        # Sampling            
-        # for i in range(self.num_groups):
-            #     for j in range(self.num_groups):
-            #         self.KL_div[it_num,i,j] = self._KL_div_gammas(
-            #                                         self.alpha_store[it_num,i,j],
-            #                                         self.alpha[i,j],
-            #                                         self.beta_store[it_num,i,j],
-            #                                         self.beta[i,j]
-            #                                         )
         
+        ## Sampling parameters
         if est_num_groups_bool:
-            self.intervals = np.arange(int_length, T_max, int_length)
+            self.intervals = np.arange(burn_in, T_max, int_length)
         else:
             self.intervals = np.arange(int_length, T_max, int_length)
         self.int_length = int_length
         self.eff_count = np.zeros((self.num_nodes, self.num_nodes))
         self.eff_obs_time = np.zeros((self.num_nodes, self.num_nodes))
         self.eff_obs_time.fill(self.int_length)
+        self.int_length_temp = self.int_length
 
-        # Algorithm parameters - conditional on the type of procedure
+        ## Algorithm parameters 
         if infer_graph_bool:
             if sigma_0 is None:
                 raise ValueError("Supply sigma_0.")
@@ -119,7 +114,19 @@ class VariationalBayes:
 
         if est_num_groups_bool:
             self.num_var_groups = num_var_groups
-            self.alpha = alpha; self.beta = beta; self.nu = nu
+            if not random:
+                self.alpha_prior = np.tile([alpha], 
+                                        (num_var_groups, num_var_groups))
+                self.beta_prior = np.tile([beta], 
+                                        (num_var_groups, num_var_groups))
+            else:
+                self.alpha_prior = np.random.uniform(0.8, 1.2, 
+                                                    (num_var_groups, num_var_groups))
+                self.beta_prior = np.random.uniform(0.8, 1.2,
+                                                   (num_var_groups, num_var_groups))
+            self.nu_prior = np.tile([nu], 
+                                    (num_var_groups, ))
+            self.omega_prior = np.ones((num_var_groups, ))
 
         if not est_num_groups_bool:
             self.alpha_prior = alpha_0
@@ -135,11 +142,6 @@ class VariationalBayes:
             - update_time: time at which we run the update.  
             - burn_in_bool: flag for if to run on the burn-in.
         """
-        if burn_in_bool:
-            int_length_temp = update_time
-        else:
-            int_length_temp = self.int_length
-
         for i in range(self.num_nodes):
             for j in range(self.num_nodes):
                 if self.sampled_network[i][j] is not None:
@@ -149,7 +151,7 @@ class VariationalBayes:
                     self.eff_count[i,j] = (
                         len(
                             np_edge[
-                                (update_time - int_length_temp <= np_edge)
+                                (update_time - self.int_length <= np_edge)
                                 &
                                 (np_edge < update_time)
                             ]
@@ -219,87 +221,138 @@ class VariationalBayes:
         infer_graph_structure. Parameters:
             - burn_in_bool: flag for whether we are running the burn-in.
         """
-        # Function to compute sum over groups within exponential (when we need
-        # to infer the graph structure).
-        def sum_term_infer(i_prime, j, k_prime):
-            term = self.tau_prior[j,:] * (
-                self.eff_count[i_prime,j] * self.sigma[i_prime,j] * (
-                    digamma(self.alpha[k_prime,:]) - np.log(self.beta[k_prime,:])
+        ## Functions to compute terms for fixed-point equations. This is 
+        ## different for each condition.
+        
+        def sum_term_infer(i, j_prime, k):
+            """
+            Function to compute sum over groups within exponential (when we DO need
+            to infer the graph structure).
+            Parameters:
+                - i, k: node and groups indices of responsibility to calculate.
+                - j_prime: index of node to check that i is connected to.
+            """
+            term = self.tau_prior[j_prime,:] * (
+                self.eff_count[i,j_prime] * self.sigma[i,j_prime] * (
+                    digamma(self.alpha[k,:]) - np.log(self.beta[k,:])
                 ) +
-                self.eff_count[j,i_prime] * self.sigma[j,i_prime] * (
-                    digamma(self.alpha[:,k_prime]) - np.log(self.beta[:,k_prime])
+                self.eff_count[j_prime,i] * self.sigma[j_prime,i] * (
+                    digamma(self.alpha[:,k]) - np.log(self.beta[:,k])
                 ) -
                 
-                self.sigma[i_prime,j] * 
-                self.alpha[k_prime,:] / self.beta[k_prime,:] -
-                self.sigma[j,i_prime] * 
-                self.alpha[:,k_prime] / self.beta[:,k_prime] + 
+                self.sigma[i,j_prime] * 
+                self.alpha[k,:] / self.beta[k,:] -
+                self.sigma[j_prime,i] * 
+                self.alpha[:,k] / self.beta[:,k] + 
                 
-                self.sigma[i_prime,j] * (
-                    digamma(self.eta[k_prime,:]) - 
-                    digamma(self.eta[k_prime,:] + self.zeta[k_prime,:])
+                self.sigma[i,j_prime] * (
+                    digamma(self.eta[k,:]) - 
+                    digamma(self.eta[k,:] + self.zeta[k,:])
                 ) +
-                (1 - self.sigma[i_prime,j]) * (
-                    digamma(self.zeta[k_prime,:]) - 
-                    digamma(self.eta[k_prime,:] + self.zeta[k_prime,:])
+                (1 - self.sigma[i,j_prime]) * (
+                    digamma(self.zeta[k,:]) - 
+                    digamma(self.eta[k,:] + self.zeta[k,:])
                 ) + 
 
                 self.int_length * (
-                    self.sigma[j,i_prime] * (
-                        digamma(self.eta[:,k_prime]) - 
-                        digamma(self.eta[:,k_prime] + self.zeta[:,k_prime])
+                    self.sigma[j_prime,i] * (
+                        digamma(self.eta[:,k]) - 
+                        digamma(self.eta[:,k] + self.zeta[:,k])
                     ) +
-                    (1 - self.sigma[j,i_prime]) * (
-                        digamma(self.zeta[:,k_prime]) - 
-                        digamma(self.eta[:,k_prime] + self.zeta[:,k_prime])
+                    (1 - self.sigma[j_prime,i]) * (
+                        digamma(self.zeta[:,k]) - 
+                        digamma(self.eta[:,k] + self.zeta[:,k])
                     )
                 )
             )
 
             return term.sum()
-        
-        # Function to compute sum over groups within exponential (when we DON'T need
-        # to infer the graph structure).
-        def sum_term(i_prime, j, k_prime):
-            # If there is no edge, do not sum.
-            if self.adj_mat[i_prime,j] == 1:
-                term = self.tau_prior[j,:] * (
-                    self.eff_count[i_prime,j] * (
-                        digamma(self.alpha[k_prime,:]) - np.log(self.beta[k_prime,:])
-                    ) +
-                    self.eff_count[j,i_prime] * (
-                        digamma(self.alpha[:,k_prime]) - np.log(self.beta[:,k_prime])
-                    ) -
 
-                    self.int_length * (
-                    self.alpha[k_prime,:] / self.beta[k_prime,:] +
-                    self.alpha[:,k_prime] / self.beta[:,k_prime]
-                    )
+        
+        def sum_term(i, j_prime, k):
+            """
+            Function to compute sum over groups within exponential (when we DON'T need
+            to infer the graph structure) and are NOT inferring groups.
+            Parameters:
+                - i, k: node and groups indices of responsibility to calculate.
+                - j_prime: index of node to check that i is connected to.
+            """
+
+            term = 0
+
+            ## Two if statements: one for (i,j_prime) \in E and one for (j_prime,i) \in E.
+            if self.adj_mat[i,j_prime] == 1:
+                # This computes the interior sum of the exponential over m \in Q for 
+                # edge (i,j_prime) if this is in the edge set. 
+                term_out = self.tau_prior[j_prime,:] * (
+                    self.eff_count[i,j_prime] * (
+                        digamma(self.alpha[k,:]) - np.log(self.beta[k,:])
+                    ) +
+                    self.int_length * 
+                    (self.alpha[k,:] / self.beta[k,:])
                 )
 
-                return term.sum()
-            else:
-                return 0
+                term += term_out.sum()
+
+            if self.adj_mat[j_prime,i] == 1:
+                # This computes the interior sum of the exponential over m \in Q for 
+                # edge (j_prime,i) if this is in the edge set.
+                term_in = self.tau_prior[j_prime,:] * (
+                    self.eff_count[j_prime,i] * (
+                        digamma(self.alpha[:,k]) - np.log(self.beta[:,k])
+                    ) +
+                    self.int_length * 
+                    (self.alpha[:,k] / self.beta[:,k])
+                )
+
+                term += term_in.sum()
+
+            return term
         
+        # Function to compute tau when IN the burn-in period.
+        def compute_tau_burn_in(sum_func, num_nodes, num_var_groups):
+            # Empty array to store updates.
+            tau_temp = np.zeros((num_nodes, num_var_groups))
+
+            # Iterate over each i \in V (each node in node set).
+            for i in range(num_nodes):
+                for k in range(num_var_groups):
+                    temp_sum = (
+                        digamma(self.omega[k]) -
+                        digamma(self.nu[k] + 
+                                self.omega[k]) + 
+                        np.sum(
+                            digamma(self.nu[:k]) -
+                            digamma(self.nu[:k] + 
+                                    self.omega[:k]))
+                    )
+                    for j_prime in range(self.num_nodes):
+                        temp_sum += sum_func(i, j_prime, k)
+                    tau_temp[i,k] = temp_sum
+            
+            return tau_temp
+
+        # Function to compute tau when NOT IN the burn-in period.
         def compute_tau(sum_func, num_nodes, num_groups, delta_z,
                         gamma):
             tau_temp = np.zeros((num_nodes, num_groups))
-            for i_prime in range(num_nodes):
-                for k_prime in range(num_groups):
+            # Compute tau_{ik} for each i \in V and k \in Q.
+            for i in range(num_nodes):
+                for k in range(num_groups):
                     temp_sum = (delta_z * 
-                                (digamma(gamma[k_prime]) - 
+                                (digamma(gamma[k]) - 
                                  digamma(gamma.sum()))
                     )
-                    for j in range(self.num_nodes):
-                        if j != i_prime:
-                            temp_sum += sum_func(i_prime, j, k_prime)
-                    tau_temp[i_prime,k_prime] = temp_sum
+                    for j_prime in range(self.num_nodes):
+                        temp_sum += sum_func(i, j_prime, k)
+                    tau_temp[i,k] = temp_sum
             
             return tau_temp
         
         # Structured in this way to prevent multiple bool checks
         if burn_in_bool:
-            pass
+            tau_temp = compute_tau_burn_in(sum_term, self.num_nodes,
+                                           self.num_var_groups)
         elif self.infer_graph_bool:
             tau_temp = compute_tau(sum_term_infer, self.num_nodes,
                                    self.num_groups, self.delta_z,
@@ -332,13 +385,13 @@ class VariationalBayes:
         self.zeta = (self.delta_rho * (self.zeta_prior -1 ) + 
                      self.tau.T @ (1 - self.sigma) @ self.tau + 1) 
 
-    def _update_q_lam(self, burn_in=False):
+    def _update_q_lam(self, burn_in_bool=False):
         """
         A method to compute the CAVI approximation to the posterior of lambda.
         This is run differently depending on the value of infer_graph_bool.
         """
-        if burn_in:
-            self.sigma = np.ones((self.num_nodes, self.num_nodes))
+        if burn_in_bool:
+            self.sigma = self.adj_mat
             had_prod_x_sig = self.eff_count * self.sigma
             self.alpha = (self.alpha_prior + 
                         self.tau.T @ had_prod_x_sig @ self.tau)
@@ -346,15 +399,25 @@ class VariationalBayes:
                         self.int_length * self.tau.T @ self.sigma @ self.tau)
         else:
             if not self.infer_graph_bool:
-                self.sigma = np.ones((self.num_nodes, self.num_nodes))
+                self.sigma = self.adj_mat
             had_prod_x_sig = self.eff_count * self.sigma
             self.alpha = (self.delta_lam * (self.alpha_prior - 1) + 
                         self.tau.T @ had_prod_x_sig @ self.tau + 1)
             self.beta = (self.delta_lam * self.beta_prior + 
                         self.int_length * self.tau.T @ self.sigma @ self.tau)
+            
     def _update_q_u(self):
         """
         """
+        ## Compute omega
+        self.omega = self.tau.sum(axis=0) + 1
+        
+        ## Calculate nu
+        sum_term = np.zeros((self.num_nodes, ))
+        self.nu = np.zeros((self.num_var_groups, ))
+        for j in range(self.num_var_groups):
+            sum_term[:] = self.tau[:,(j+1):].sum(axis=1) 
+            self.nu[j] = sum_term.sum() + self.nu_prior[j]
 
 
     def _KL_div_gammas(self, a1, a2, b1, b2):
@@ -372,7 +435,8 @@ class VariationalBayes:
 
     def run_full_var_bayes(self, delta_z: float=1, delta_pi: float=1, 
                            delta_lam: float=1, delta_rho:float=1,
-                           n_cavi: int=2, n_cavi_burn: int=5):
+                           n_cavi: int=2, n_cavi_burn: int=5,
+                           group_threshold: float=0.05):
         """
         A method to run the variational Bayesian update in its entirety.
         Parameters:
@@ -397,40 +461,49 @@ class VariationalBayes:
             self.zeta_store = np.zeros((len(self.intervals) + 1, 
                                         self.num_groups, 
                                         self.num_groups))
-        # Arrays that are needed only for estimating number of groups
-        if self.est_num_groups_bool:
-            self.alpha_prior = np.tile(self.alpha, 
-                                       (self.num_var_groups, self.num_var_groups))
-            self.beta_prior = np.tile(self.beta, 
-                                      (self.num_var_groups, self.num_var_groups))
-            self.nu_prior = np.tile(self.nu, (self.num_var_groups,))
-
-        # Arrays that are always needed
-        self.gamma_store = np.zeros((len(self.intervals) + 1, 
-                                self.num_groups))
-        self.tau_store = np.zeros((len(self.intervals) + 1, 
-                                self.num_nodes, 
-                                self.num_groups))
-        self.alpha_store = np.zeros((len(self.intervals) + 1, 
-                                    self.num_groups, 
+            
+        if not self.est_num_groups_bool:
+            self.tau_store = np.zeros((len(self.intervals) + 1, 
+                                    self.num_nodes, 
                                     self.num_groups))
-        self.beta_store = np.zeros((len(self.intervals) + 1, 
-                                    self.num_groups, 
-                                    self.num_groups))
+            self.alpha_store = np.zeros((len(self.intervals) + 1, 
+                                        self.num_groups, 
+                                        self.num_groups))
+            self.beta_store = np.zeros((len(self.intervals) + 1, 
+                                        self.num_groups, 
+                                        self.num_groups))
+            self.gamma_store = np.zeros((len(self.intervals) + 1, 
+                                        self.num_groups))
         
         ## Initialise relevant parameters if needed
-        if not self.est_num_groups_bool:
+        if self.est_num_groups_bool:
+            self.tau_prior = (
+                np.array([1 / self.num_var_groups] * (self.num_nodes * self.num_var_groups))
+                .reshape((self.num_nodes, self.num_var_groups))
+            )
+        else:
             self.tau_prior = (
                 np.array([1 / self.num_groups] * (self.num_nodes * self.num_groups))
                 .reshape((self.num_nodes, self.num_groups))
             )
+            # self.tau_prior = (
+            #     np.array([1/2 + 0.01, 1/2 - 0.01] * (self.num_nodes))
+            #     .reshape((self.num_nodes, self.num_groups))
+            # )
+        self.alpha = self.alpha_prior
+        self.beta = self.beta_prior
+
+        if self.est_num_groups_bool:
+            # Smaller than the remaining arrays, as the initial value is 
+            # the burn-in output.
+            self.nu = self.nu_prior
+            self.omega = self.omega_prior
+        else:
             if self.infer_graph_bool:
                 self.sigma_prior = self.sigma_0
                 self.eta = self.eta_prior
                 self.zeta = self.zeta_prior
             self.gamma = self.gamma_prior
-            self.alpha = self.alpha_prior
-            self.beta = self.beta_prior
 
             if self.infer_graph_bool:
                 self.sigma_store[0,:,:] = self.sigma_prior
@@ -445,17 +518,80 @@ class VariationalBayes:
         # self.KL_div = np.zeros((len(self.intervals), self.num_groups, self.num_groups))
         for it_num, update_time in enumerate(self.intervals):
             if (self.est_num_groups_bool) & (it_num == 0):
-                ## Run burn-in      
+                ## Run the burn-in
                 print(f"...Running burn-in computation...")
+
+                ## Temporarily set the interval length to the burn-in time. 
+                self.int_length = self.burn_in
 
                 # Compute counts in the interval
                 self._compute_eff_count(update_time, burn_in_bool=True)
 
+                ## Run the burn-in (n_cavi_burn times)
+                cavi_count = 0
+                while cavi_count < n_cavi_burn:
+                    self._update_q_z(burn_in_bool=True)    
+                    self._update_q_u()
+                    self._update_q_lam(burn_in_bool=True)
+                    cavi_count += 1
+                
+                ## Update priors
+                self.tau_prior = self.tau.copy()
+                self.alpha_prior = self.alpha.copy()
+                self.beta_prior = self.beta.copy()
 
+                ## Create priors for the post-burn-in runs
+                # Set u_i to be the mean of the corresponding beta distribution
+                u_samples = np.zeros((self.num_var_groups, ))
+                for i in range(self.num_var_groups):
+                    u_samples[i] = self.omega[i] / (self.omega[i] + self.nu[i])
+                prods = np.cumprod(1 - u_samples[:(len(u_samples)-1)])
+                pi = u_samples * np.concatenate(([1], prods))
+
+                print(u_samples)
+
+                # Select the number of groups based on a threshold
+                mask = pi > group_threshold
+                self.num_groups = sum(mask) + 1
+                pi = pi[mask]
+                # pi = np.insert(pi, len(pi), 0)
+                # pi[-1] = 1 - np.sum(pi)
+                pi = pi / np.sum(pi)
+                self.gamma_prior = pi
+
+                ## Temporary
+                print(f"lambda: {self.alpha / self.beta}")
+                print(f"gamma: {self.gamma_prior}")
 
             else:
                 ## Run remaining runs
                 print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...", end='\r')
+                
+                ## Reset the interval length
+                self.int_length = self.int_length_temp
+                
+                if (self.est_num_groups_bool) & (it_num == 1):
+                    ## Store estimates from burn-in
+                    # Make the store arrays
+                    self.tau_store = np.zeros((len(self.intervals) + 1, 
+                                    self.num_nodes, 
+                                    self.num_groups))
+                    self.alpha_store = np.zeros((len(self.intervals) + 1, 
+                                                self.num_groups, 
+                                                self.num_groups))
+                    self.beta_store = np.zeros((len(self.intervals) + 1, 
+                                                self.num_groups, 
+                                                self.num_groups))
+                    self.gamma_store = np.zeros((len(self.intervals) + 1, 
+                                self.num_groups))
+
+                    # Populate with initial values (repeat values to accomodate
+                    # for the shape being different in the case of estimating the
+                    # number of groups)
+                    self.gamma_store[0:2,:] = self.gamma_prior
+                    self.tau_store[0:2,:,:] = self.tau
+                    self.alpha_store[0:2,:,:] = self.alpha
+                    self.beta_store[0:2,:,:] = self.beta
 
                 # Compute counts in the interval
                 self._compute_eff_count(update_time, burn_in_bool=False)
@@ -466,13 +602,13 @@ class VariationalBayes:
                     if self.infer_graph_bool:
                         self._update_q_a()
                     self._update_q_z()
+                    self._update_q_pi()
+                    self._update_q_lam()
+                    if self.infer_graph_bool:
+                        self._update_q_rho()
                     cavi_count += 1
+                    
 
-                self._update_q_pi()
-                self._update_q_lam()
-                if self.infer_graph_bool:
-                    self._update_q_rho()
-            
                 # Compute the KL-divergence for each rate parameter
                 # for i in range(self.num_groups):
                 #     for j in range(self.num_groups):
