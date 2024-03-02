@@ -56,7 +56,8 @@ class PoissonNetwork(BaseNetwork):
                                    mem_change_times: list, rate_change_times: list,
                                    num_mem_cps: int, num_rate_cps: int):
         """
-        Create a list of the relevant change point times.
+        Create a list of the relevant change point times. The user can supply the change
+        times, or they can be randomly sampled.
         Parameters:
             - mem_change: Boolean for whether we see a change in memberships.
             - rate_change: Boolean for whether we see rate matrix change.
@@ -71,9 +72,10 @@ class PoissonNetwork(BaseNetwork):
         self.mem_change = mem_change
         self.rate_change = rate_change
 
-        # CASE 1: rate and mem changes
+        ## CASE 1: rate and mem changes
         if mem_change & rate_change:
-            # Sample mem change times
+            ## Membership change times  
+            # If not supplied, change times are randomly sampled.
             if mem_change_times is None:
                 if num_mem_cps == 0:
                     raise ValueError("Please supply a non-zero integer for num_mem_cps")
@@ -87,7 +89,8 @@ class PoissonNetwork(BaseNetwork):
                 self.mem_change_point_times = mem_change_times
             self.mem_change_point_times.sort()
             
-            # Sample rate change times
+            ## Rate change times
+            # If not supplied, change times are randomly sampled.
             if rate_change_times is None:
                 if num_rate_cps == 0:
                     raise ValueError("Please supply a non-zero integer for num_rate_cps")
@@ -123,8 +126,9 @@ class PoissonNetwork(BaseNetwork):
             self.full_cp_times = full_cp_times_indicator
             
 
-        # CASE 2: mem but not rate changes
+        ## CASE 2: mem but not rate changes
         elif (mem_change & (not rate_change)):
+            # If not supplied, change times are randomly sampled.
             if mem_change_times is None:
                 if num_mem_cps == 0:
                     raise ValueError("Please supply a non-zero integer for num_mem_cps")
@@ -138,8 +142,9 @@ class PoissonNetwork(BaseNetwork):
                 self.mem_change_point_times = mem_change_times
             self.mem_change_point_times.sort()
         
-        # CASE 3: rate but not mem changes
+        ## CASE 3: rate but not mem changes
         elif (rate_change & (not mem_change)):
+            # If not supplied, change times are randomly sampled.
             if rate_change_times is None:
                 if num_rate_cps == 0:
                     raise ValueError("Please supply a non-zero integer for num_rate_cps")
@@ -153,16 +158,16 @@ class PoissonNetwork(BaseNetwork):
             self.rate_change_point_times.sort()
 
 
-    def _create_node_memberships(self, group_sizes: list, group_assignment_type: str,
-                                 mem_change_nodes: np.array):
+    def _create_node_memberships(self, group_sizes: list, mem_change_nodes: np.array):
         """
         Method to create a list of numpy arrays that give the membership of each node.
-        This will be of length num_mem_cps + 1.
+        This will be of length num_mem_cps + 1 (so it is of length 1 if no changes).
+        There are different methods for assigning group memberships.
         Parameters:
             - group_sizes: the number of number of nodes in each group. The length must
                             be the same as the number of groups.
-            - group_assignment_type: how we split the group memberships over the nodes. This
-                                        can be any of "sequential",  "alternate" or "random".
+            # - group_assignment_type: how we split the group memberships over the nodes. This
+            #                             can be any of "sequential",  "alternate" or "random".
         """
         if group_sizes is None:
             raise ValueError("Supply group sizes.")
@@ -173,38 +178,40 @@ class PoissonNetwork(BaseNetwork):
         if np.array(group_sizes).sum() != self.num_nodes:
             raise ValueError("Ensure the group sizes sum to the total number of nodes.")
         
+        ## Create initial group assignments
         groups = np.array(
             list(flatten([[i]*j for i,j in enumerate(group_sizes)]))
         )
 
-        # Order the nodes to match the desired split of group assignments
-        if group_assignment_type == 'sequential':
-            pass
+        # # Order the nodes to match the desired split of group assignments
+        # if group_assignment_type == 'sequential':
+        #     pass
 
-        elif group_assignment_type == 'alternate':
-            # Get the number of unique elements and the counts
-            unique_elements, counts = np.unique(groups, return_counts=True)
+        # elif group_assignment_type == 'alternate':
+        #     # Get the number of unique elements and the counts
+        #     unique_elements, counts = np.unique(groups, return_counts=True)
 
-            # Create a repeating array, where we repeat the minimum number of times
-            min_count = np.min(counts)
-            repeating_array = np.tile(unique_elements, min_count)
+        #     # Create a repeating array, where we repeat the minimum number of times
+        #     min_count = np.min(counts)
+        #     repeating_array = np.tile(unique_elements, min_count)
 
-            # Append the remaining counts of the other groups
-            remaining_elements = []
-            for i in range(len(unique_elements)):
-                num_to_append = counts[i] - min_count
-                remaining_elements.append([i] * num_to_append)
-            remaining_elements = np.array(list(flatten(remaining_elements)))
+        #     # Append the remaining counts of the other groups
+        #     remaining_elements = []
+        #     for i in range(len(unique_elements)):
+        #         num_to_append = counts[i] - min_count
+        #         remaining_elements.append([i] * num_to_append)
+        #     remaining_elements = np.array(list(flatten(remaining_elements)))
 
-            groups = np.concatenate((repeating_array, remaining_elements)).astype(int)
+        #     groups = np.concatenate((repeating_array, remaining_elements)).astype(int)
 
-        elif group_assignment_type == 'random':
-            np.random.shuffle(groups)
+        # elif group_assignment_type == 'random':
+        #     np.random.shuffle(groups)
         
-        else:
-            raise ValueError("""Please supply group_assignment_type from the
-                            list ['sequential', 'alternate', 'random']""")
+        # else:
+        #     raise ValueError("""Please supply group_assignment_type from the
+        #                     list ['sequential', 'alternate', 'random']""")
         
+        ## Create assignments for change points
         # If a membership change point(s) is specified, then we sample the group assignments
         # in each region around the change points. Otherwise, simply return original group
         # assignments.
@@ -219,7 +226,7 @@ class PoissonNetwork(BaseNetwork):
                 old_group = groups_cps[mem_change_nodes[cp]]
                 new_group = old_group
                 while new_group == old_group:
-                    new_group = np.random.randint(0,self.num_groups)
+                    new_group = np.random.randint(0, self.num_groups)
                 groups_cps[mem_change_nodes[cp]] = new_group 
                 groups_in_regions.append(groups_cps.copy())
 
@@ -297,8 +304,7 @@ class PoissonNetwork(BaseNetwork):
         return arrivals.tolist()
     
     def sample_network(self, rate_change: bool = False, mem_change: bool = False, 
-                        num_rate_cps: int = 0, num_mem_cps: int = 0,
-                        group_assignment_type: str = 'sequential', group_sizes: np.array = None, 
+                        num_rate_cps: int = 0, num_mem_cps: int = 0, group_sizes: np.array = None, 
                         mem_change_times: np.array = None, mem_change_nodes: np.array = None,
                         rate_change_times: np.array = None, entries_to_change: list = None,
                         rate_matrices: List[np.array] = None) -> Dict[int, Dict[int, list]]:
@@ -309,8 +315,8 @@ class PoissonNetwork(BaseNetwork):
             - mem_change: bool for whether we have a change in the group memberships.
             - num_mem_cps: the number of membership change points we observe.
             - num_rate_cps: the number of rate change points we observe.
-            - group_assignment_type: how we split the group memberships over the nodes. This
-                                    can be any of "sequential",  "alternate" or "random".
+            # - group_assignment_type: how we split the group memberships over the nodes. This
+            #                         can be any of "sequential",  "alternate" or "random".
             - group_sizes: the number of nodes in each group (must sum to num_nodes).
             - mem_change_point_times: the times of the changes (must have length equal to num_mem_cps).
             - mem_change_nodes: the nodes that change at each change point (must have length equal to num_mem_cps).
@@ -321,23 +327,71 @@ class PoissonNetwork(BaseNetwork):
         # STEP 1
         # Create change points and relevant matrices and/or changing nodes.
         ###
+        ## Checks
+        if mem_change:
+            if (mem_change_nodes is not None) & (mem_change_times is not None):
+                    if len(mem_change_nodes) != len(mem_change_times):
+                        raise ValueError("""mem_change_nodes and mem_change_times must have
+                                         the same length.""")
+            # if num_mem_cps supplied, check that it agrees
+            if num_mem_cps != 0:
+                if (mem_change_nodes is not None):
+                    if num_mem_cps != len(mem_change_nodes):
+                        num_mem_cps = len(mem_change_nodes)
+                if (mem_change_times is not None):
+                    if num_mem_cps != len(mem_change_times):
+                        num_mem_cps = mem_change_times
+            # if num_mem_cps is not supplied, then it is inferred 
+            if num_mem_cps == 0:
+                if (mem_change_times is not None) & (mem_change_nodes is not None):
+                    num_mem_cps = len(mem_change_times)
+                elif (mem_change_times is not None):
+                    num_mem_cps = len(mem_change_times)
+                elif (mem_change_nodes is not None):
+                    num_mem_cps = len(mem_change_nodes)
+                else:
+                    raise ValueError("""Please supply a non-zero value of num_mem_cps""")
+            # if mem_change_nodes not supplied, it is created randomly. mem_change_times
+            # are created later if not supplied.
+            if mem_change_nodes is None:
+                mem_change_nodes = np.random.choice(np.arange(self.num_nodes),
+                                                    size=num_mem_cps,
+                                                    replace=True)
+        if rate_change:
+            if (rate_change_times is not None) & (entries_to_change is not None):
+                    if len(rate_change_times) != len(entries_to_change):
+                        raise ValueError("""rate_change_times and entries_to_change must have
+                                         the same length.""")
+            # if num_rate_cps supplied, check that it agrees
+            if num_rate_cps != 0:
+                if (entries_to_change is not None):
+                    if num_rate_cps != len(entries_to_change):
+                        num_rate_cps = len(entries_to_change)
+                if (rate_change_times is not None):
+                    if num_rate_cps != len(rate_change_times):
+                        num_rate_cps = rate_change_times
+            # num_rate_cps is inferred if rate_change_times are supplied
+            if num_rate_cps == 0:
+                if (rate_change_times is not None) & (entries_to_change is not None):
+                    num_rate_cps = len(rate_change_times)
+                elif (rate_change_times is not None):
+                    num_rate_cps = len(rate_change_times)
+                elif (entries_to_change is not None):
+                    num_rate_cps = len(entries_to_change)
+                else:
+                    raise ValueError("""Please supply a non-zero value of num_mem_cps""")
+            # if rate matrices is supplied, it must agree with num_rate_cps
+            if rate_matrices is not None:
+                if len(rate_matrices) != (num_rate_cps + 1):
+                    raise ValueError("""Must supply a number of rate matrices to agree with 
+                                     num_rate_cps""")
+        
         num_cps = num_mem_cps + num_rate_cps
 
-        # Checks
-        if entries_to_change is not None:
-            if len(entries_to_change) != num_rate_cps:
-                raise ValueError("Required that num_rate_cps matches the length of entries_to_change")
-        if rate_matrices is not None:
-            if len(rate_matrices) != (num_rate_cps + 1):
-                raise ValueError("Must supply a number of rate matrices to match num_rate_cps")
-        if mem_change_nodes is None:
-            mem_change_nodes = np.random.choice(np.arange(self.num_nodes),size=num_mem_cps,
-                                                replace=True)
         # Create change point times
         self._create_change_point_times(mem_change, rate_change, mem_change_times, 
                                         rate_change_times, num_mem_cps, num_rate_cps)
-        groups_in_regions = self._create_node_memberships(group_sizes, group_assignment_type,
-                                                          mem_change_nodes)
+        groups_in_regions = self._create_node_memberships(group_sizes, mem_change_nodes)
         # Create rate matrices
         if rate_matrices is None:
             self._create_rate_matrices(sigma=2, entries_to_change=entries_to_change)

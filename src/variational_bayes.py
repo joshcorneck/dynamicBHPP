@@ -65,18 +65,18 @@ class VariationalBayes:
                              Please set one of 'est_num_groups' or 'infer_graph_bool'
                              to False.
                              """)
-           if alpha is None:
+           if alpha_0 is None:
                raise ValueError("""You must supply a float for alpha""")
-           elif not isinstance(alpha, float):
-               alpha = alpha.__float__()
-           if beta is None:
+           elif not isinstance(alpha_0, float):
+               alpha_0 = alpha_0.__float__()
+           if beta_0 is None:
                raise ValueError("""You must supply a float for beta""")
-           elif not isinstance(beta, float):
-               beta = beta.__float__()
-           if nu is None:
+           elif not isinstance(beta_0, float):
+               beta_0 = beta_0.__float__()
+           if nu_0 is None:
                raise ValueError("""You must supply a float for nu""")
-           elif not isinstance(nu, float):
-               nu = nu.__float__()
+           elif not isinstance(nu_0, float):
+               nu_0 = nu_0.__float__()
                            
         if adj_mat is not None:
             self.adj_mat = adj_mat
@@ -442,18 +442,13 @@ class VariationalBayes:
         self.delta_lam = delta_lam
 
         ## Empty arrays for storage
-        # Arrays that are needed only for graph inference
         if self.infer_graph_bool:
-            self.sigma_store = np.zeros((len(self.intervals) + 1, 
-                                         self.num_nodes, 
-                                         self.num_nodes))
             self.eta_store = np.zeros((len(self.intervals) + 1, 
                                        self.num_groups, 
                                        self.num_groups))
             self.zeta_store = np.zeros((len(self.intervals) + 1, 
                                         self.num_groups, 
                                         self.num_groups))
-
         if self.infer_num_groups_bool:
             self.omega_store = np.zeros((len(self.intervals) + 1,
                                           self.num_var_groups))
@@ -468,7 +463,6 @@ class VariationalBayes:
             self.beta_store = np.zeros((len(self.intervals) + 1, 
                                         self.num_var_groups, 
                                         self.num_var_groups))
-
         else:
             self.gamma_store = np.zeros((len(self.intervals) + 1, 
                                         self.num_groups))
@@ -521,7 +515,6 @@ class VariationalBayes:
                 self.zeta = self.zeta_prior
 
                 # Store parameter value
-                self.sigma_store[0,:,:] = self.sigma_prior
                 self.eta_store[0,:,:] = self.eta
                 self.zeta_store[0,:,:] = self.zeta
 
@@ -535,7 +528,7 @@ class VariationalBayes:
         for it_num, update_time in enumerate(self.intervals):
             if ((self.burn_in_bool) & (it_num == 0)):
                 ## Run the burn-in
-                print(f"...Running burn-in computation...")
+                print(f"...Running burn-in computation...", end='\r')
 
                 ## Temporarily set the interval length to the burn-in time. 
                 self.int_length = self.burn_in_length
@@ -552,88 +545,64 @@ class VariationalBayes:
 
             ## Update estimates (run CAVI n_cavi times)
             if self.infer_graph_bool:
-                pass
-            cavi_count = 0
-            while cavi_count < n_cavi:
-                if self.infer_graph_bool:
+                cavi_count = 0
+                while cavi_count < n_cavi:
                     self._update_q_a()
-                self._update_q_z()
-                cavi_count += 1
-
-            self._update_q_pi()
-            self._update_q_lam()
-            if self.infer_graph_bool:
-                self._update_q_rho()
-
-            ## Run the CAVI updates
-            else:
+                    self._update_q_z()
+                    self._update_q_pi()
+                    self._update_q_lam()
+                    self._update_q_rho()
+                    cavi_count += 1
+            elif self.infer_num_groups_bool:
                 cavi_count = 0
                 while cavi_count < n_cavi:
                     self._update_q_z()    
                     self._update_q_u()
                     self._update_q_lam()
                     cavi_count += 1
-                
-                ## Update priors
-                self.tau_prior = self.tau.copy()
-                self.alpha_prior = self.alpha.copy()
-                self.beta_prior = self.beta.copy()
+            else:
+                cavi_count = 0
+                while cavi_count < n_cavi:
+                    self._update_q_z()
+                    self._update_q_pi()
+                    self._update_q_lam()
+                    cavi_count += 1
 
-                ## Create priors for the post-burn-in runs
-                # Set u_i to be the mean of the corresponding beta distribution
-                u_samples = np.zeros((self.num_var_groups, ))
-                for i in range(self.num_var_groups):
-                    u_samples[i] = self.omega[i] / (self.omega[i] + self.nu[i])
-                prods = np.cumprod(1 - u_samples[:(len(u_samples)-1)])
-                pi = u_samples * np.concatenate(([1], prods))
-
-                print(u_samples)
-
-                # Select the number of groups based on a threshold
-                mask = pi > group_threshold
-                self.num_groups = sum(mask) + 1
-                pi = pi[mask]
-                # pi = np.insert(pi, len(pi), 0)
-                # pi[-1] = 1 - np.sum(pi)
-                pi = pi / np.sum(pi)
-                self.gamma_prior = pi
-
-                ## Temporary
-                print(f"lambda: {self.alpha / self.beta}")
-                print(f"gamma: {self.gamma_prior}")
-
-
-                
-                    
-
-                # Compute the KL-divergence for each rate parameter
-                # for i in range(self.num_groups):
-                #     for j in range(self.num_groups):
-                #         self.KL_div[it_num,i,j] = self._KL_div_gammas(
-                #                                         self.alpha_store[it_num,i,j],
-                #                                         self.alpha[i,j],
-                #                                         self.beta_store[it_num,i,j],
-                #                                         self.beta[i,j]
-                #                                         )
-                
-                # Flag if CP has occurred
-                
-
-                # Store estimates
-                if self.infer_graph_bool:
-                    self.sigma_store[it_num + 1,:,:] = self.sigma
-                    self.eta_store[it_num + 1,:,:] = self.eta
-                    self.zeta_store[it_num + 1,:,:] = self.zeta
-                self.gamma_store[it_num + 1,:] = self.gamma
-                self.tau_store[it_num + 1,:,:] = self.tau
-                self.alpha_store[it_num + 1,:,:] = self.alpha
-                self.beta_store[it_num + 1,:,:] = self.beta
-
-                # Update priors
+            ## Update priors
+            self.tau_prior = self.tau.copy()
+            self.alpha_prior = self.alpha.copy()
+            self.beta_prior = self.beta.copy()
+            if self.infer_num_groups_bool:
+                self.nu_prior = self.nu.copy()
+                self.omega_prior = self.omega.copy()
+            else:
                 if self.infer_graph_bool:
                     self.eta_prior = self.eta.copy()
                     self.zeta_prior = self.zeta.copy()
                 self.gamma_prior = self.gamma.copy()
-                self.tau_prior = self.tau.copy()
-                self.alpha_prior = self.alpha.copy()
-                self.beta_prior = self.beta.copy()
+
+            # Compute the KL-divergence for each rate parameter
+            # for i in range(self.num_groups):
+            #     for j in range(self.num_groups):
+            #         self.KL_div[it_num,i,j] = self._KL_div_gammas(
+            #                                         self.alpha_store[it_num,i,j],
+            #                                         self.alpha[i,j],
+            #                                         self.beta_store[it_num,i,j],
+            #                                         self.beta[i,j]
+            #                                         )
+
+            ## Store estimates
+            self.tau_store[it_num + 1,:,:] = self.tau
+            self.alpha_store[it_num + 1,:,:] = self.alpha
+            self.beta_store[it_num + 1,:,:] = self.beta
+            if self.infer_num_groups_bool:
+                self.nu_store[it_num + 1,:] = self.nu
+                self.omega_store[it_num + 1,:] = self.omega
+            else:
+                if self.infer_graph_bool:
+                    self.eta_store[it_num + 1,:,:] = self.eta
+                    self.zeta_store[it_num + 1,:,:] = self.zeta
+                self.gamma_store[it_num + 1,:] = self.gamma
+
+            print(f"Group proportions: {self.tau.mean(axis=0)}")
+                
