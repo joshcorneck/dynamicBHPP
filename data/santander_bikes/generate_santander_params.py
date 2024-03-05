@@ -25,4 +25,6 @@ print(len(all_combinations))
 df_combs = pd.DataFrame(all_combinations, 
                         columns=['num_nodes', 'num_groups', 'n_cavi',
                                 'delta_z', 'delta_pi', 'delta_lam'])
+df_combs.to_pickle('data/santander_bikes/df_high_school_2012_params.pkl')
+
 # %%
