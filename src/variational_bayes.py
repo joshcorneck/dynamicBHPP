@@ -605,4 +605,4 @@ class VariationalBayes:
                 self.gamma_store[it_num + 1,:] = self.gamma
 
             print(self.tau.mean(axis=0))
-                
+            print(self.alpha / self.beta)

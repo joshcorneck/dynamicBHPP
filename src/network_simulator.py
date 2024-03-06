@@ -44,17 +44,20 @@ class PoissonNetwork(BaseNetwork):
     """
 
     def __init__(self, num_nodes: int, num_groups: int, T_max: float,
-                 lam_matrix: np.array, rho_matrix: np.array = None) -> None:
+                 lam_matrix: np.array, rho_matrix: np.array = None, 
+                 sparsity: float = None) -> None:
         super().__init__()
         self.num_nodes = num_nodes; self.num_groups = num_groups; self.T_max = T_max
         self.lam_matrix = lam_matrix.astype(float); self.rho_matrix = rho_matrix
+        self.sparsity = sparsity
 
         # Flags for method calling
         self._create_change_point_times_flag = False
 
-    def _create_change_point_times(self, mem_change: bool, rate_change: bool, group_merge: bool,
+    def _create_change_point_times(self, mem_change: bool, rate_change: bool, group_num_change:bool,
                                    mem_change_times: list, rate_change_times: list, 
-                                   group_merge_times: list, num_mem_cps: int, num_rate_cps: int):
+                                   group_num_change_times: list, num_mem_cps: int, 
+                                   num_rate_cps: int):
         """
         Create a list of the relevant change point times. The user can supply the change
         times, or they can be randomly sampled.
@@ -71,7 +74,7 @@ class PoissonNetwork(BaseNetwork):
         self._create_change_point_times_flag = True
         self.mem_change = mem_change
         self.rate_change = rate_change
-        self.group_merge = group_merge
+        self.group_num_change = group_num_change
 
         ## CASE 1: rate and mem changes
         if mem_change & rate_change:
@@ -159,18 +162,14 @@ class PoissonNetwork(BaseNetwork):
             self.rate_change_point_times.sort()
 
         # CASE 4: group merger
-        elif (group_merge):
+        elif (group_num_change):
             # If not supplied, change times are randomly sampled.
-            if group_merge_times is None:
-                self.group_merge_times = np.random.uniform(low=0, high=self.T_max, 
-                                                size=1)
-            else:
-                self.group_merge_times = group_merge_times
-            self.group_merge_times.sort()
-
-
-    def _create_node_memberships(self, group_sizes: list, mem_change_nodes: np.array,
-                                 groups_to_merge: np.array):
+            if group_num_change_times is None:
+                raise ValueError("Supply times for changes to group number.")
+            self.group_num_change_times = group_num_change_times
+            self.group_num_change_times.sort()
+        
+    def _create_node_memberships(self, group_sizes: list, mem_change_nodes: np.array):
         """
         Method to create a list of numpy arrays that give the membership of each node.
         This will be of length num_mem_cps + 1 (so it is of length 1 if no changes).
@@ -185,15 +184,17 @@ class PoissonNetwork(BaseNetwork):
             raise ValueError("Supply group sizes.")
         if not self._create_change_point_times_flag:
             raise ValueError("You must call _create_change_point_times first.")
-        if len(group_sizes) != self.num_groups:
-            raise ValueError("Ensure that len(group_sizes) matches the number of groups.")
-        if np.array(group_sizes).sum() != self.num_nodes:
-            raise ValueError("Ensure the group sizes sum to the total number of nodes.")
-        
-        ## Create initial group assignments
-        groups = np.array(
-            list(flatten([[i]*j for i,j in enumerate(group_sizes)]))
-        )
+        if self.group_num_change:
+            for i in range(len(group_sizes)):
+                if np.array(group_sizes[i]).sum() != self.num_nodes:
+                    raise ValueError("Ensure the all group sizes sum to the total number of nodes.")
+                if group_sizes[i].shape[0] != self.num_groups:
+                    raise ValueError("Ensure that group_sizes shape matches the number of groups.")
+        else:
+            if np.array(group_sizes).sum() != self.num_nodes:
+                raise ValueError("Ensure the group sizes sum to the total number of nodes.")
+            if group_sizes.shape[0] != self.num_groups:
+                raise ValueError("Ensure that group_sizes shape matches the number of groups.")
 
         # # Order the nodes to match the desired split of group assignments
         # if group_assignment_type == 'sequential':
@@ -225,11 +226,19 @@ class PoissonNetwork(BaseNetwork):
         
         ## Create assignments for change points
         if self.mem_change:
+            if isinstance(group_sizes, list):
+                raise ValueError("Ensure only one matrix of group_sizes is supplied.")
+            
+            # Create initial group assignments
+            initial_groups = np.array(
+                list(flatten([[i]*j for i,j in enumerate(group_sizes)]))
+            )
+
             # Create a list of lists in which we have the group assignments in each region.
             groups_in_regions = []
-            groups_in_regions.append(groups)
+            groups_in_regions.append(initial_groups)
             # Copy orginal group array
-            groups_cps = groups.copy()
+            groups_cps = initial_groups.copy()
             # Iterate over change points
             for cp in range(self.num_mem_cps):
                 old_group = groups_cps[mem_change_nodes[cp]]
@@ -241,26 +250,31 @@ class PoissonNetwork(BaseNetwork):
 
             return groups_in_regions
         
-        ## Create assignments for group mergers
-        elif self.group_merge:
+        ## Create assignments for changing number of groups
+        elif self.group_num_change:
+            if len(group_sizes) != (len(self.group_num_change_times) + 1):
+                raise ValueError("""Supplied number of group sizes matrices
+                                 must match the number of change times""")
+            
             # Create a list of lists in which we have the group assignments in each region.
             groups_in_regions = []
-            groups_in_regions.append(groups)
-            # Copy orginal group array
-            groups_cps = groups.copy()
+
+            # Initial group assignments
+            initial_groups = np.array(
+                list(flatten([[i]*j for i,j in enumerate(group_sizes[0])]))
+            )
+            groups_in_regions.append(initial_groups)
             # Iterate over change points
-            for cp in range(len(self.group_merge_times)):
-                old_group = groups_to_merge[cp,0]
-                new_group = groups_to_merge[cp,1]
-                old_group_idx = np.where(groups == old_group)
-                groups_cps[old_group_idx] = new_group
-                groups_in_regions.append(groups_cps.copy())
+            for cp in range(len(self.group_num_change_times)):
+                new_groups = np.array(
+                    list(flatten([[i]*j for i,j in enumerate(group_sizes[cp + 1])]))
+                )
+                groups_in_regions.append(new_groups.copy())
 
             return groups_in_regions
-
-        ## If no change points
+        
         else:
-            return groups
+            return initial_groups
         
     def _create_rate_matrices(self, sigma: float, entries_to_change: list):
         """
@@ -285,7 +299,7 @@ class PoissonNetwork(BaseNetwork):
         else:
             pass
 
-    def _sample_adjancency_matrix(self, groups: int):
+    def _sample_adjancency_matrix(self, groups: int, sparsity: float):
         """
         Samples an adjacency matrix from the supplied rho_matrix.
         Parameters:
@@ -294,23 +308,35 @@ class PoissonNetwork(BaseNetwork):
 
         # Extract the groups for each node. If there is a membership change point, we 
         # will have a list not numpy array.
-        if (not self.mem_change) & (not self.group_merge):
+        if (not self.mem_change) & (not self.group_num_change):
             group_assignments = groups
         else:
             group_assignments = groups[0]
 
-        # Create an n x n matrix where the entries are the relevant 
-        # rho_matrix values and sample the adjacency matrix
-        if self.rho_matrix is not None:
-            temp_mat = self.rho_matrix[group_assignments]
-            edge_probs = temp_mat[:, group_assignments]
-            np.fill_diagonal(edge_probs, 0)
-            adjacency_matrix = (
-                (np.random.rand(self.num_nodes, self.num_nodes) < edge_probs).astype(int)
-            )
-        else:
+        ## If a sparsity is supplied, randomly assign edges to that proportion
+        if sparsity is not None:
             adjacency_matrix = np.ones((self.num_nodes, self.num_nodes))
             np.fill_diagonal(adjacency_matrix, 0)
+
+            # Randomly set '1 - sparsity' proportion of entries to zero
+            num_nonzero_entries = int((1 - sparsity) * (self.num_nodes ** 2 - self.num_nodes))
+            indices_to_zero = np.random.choice(range(self.num_nodes ** 2), num_nonzero_entries, replace=False)
+            adjacency_matrix_flat = adjacency_matrix.flatten()
+            adjacency_matrix_flat[indices_to_zero] = 0
+            adjacency_matrix = adjacency_matrix_flat.reshape((self.num_nodes, self.num_nodes))
+        
+        ## Otherwise use the supplied rho_matrix, and set to fully-connected if rho_matrix is None
+        else:
+            if self.rho_matrix is not None:
+                temp_mat = self.rho_matrix[group_assignments]
+                edge_probs = temp_mat[:, group_assignments]
+                np.fill_diagonal(edge_probs, 0)
+                adjacency_matrix = (
+                    (np.random.rand(self.num_nodes, self.num_nodes) < edge_probs).astype(int)
+                )
+            else:
+                adjacency_matrix = np.ones((self.num_nodes, self.num_nodes))
+                np.fill_diagonal(adjacency_matrix, 0)
 
         return adjacency_matrix
     
@@ -331,12 +357,12 @@ class PoissonNetwork(BaseNetwork):
         return arrivals.tolist()
     
     def sample_network(self, rate_change: bool = False, mem_change: bool = False, 
-                        group_merge: bool = False, num_rate_cps: int = 0, num_mem_cps: int = 0, 
+                        group_num_change: bool = False,
+                        num_rate_cps: int = 0, num_mem_cps: int = 0, 
                         group_sizes: np.array = None, mem_change_times: np.array = None, 
                         mem_change_nodes: np.array = None, rate_change_times: np.array = None, 
                         entries_to_change: list = None, rate_matrices: List[np.array] = None,
-                        groups_to_merge: np.array = None, group_merge_times: np.array = None
-                        ) -> Dict[int, Dict[int, list]]:
+                        group_num_change_times: np.array = None) -> Dict[int, Dict[int, list]]:
         """
         A method to sample the full network.
         Parameters:
@@ -418,11 +444,11 @@ class PoissonNetwork(BaseNetwork):
         num_cps = num_mem_cps + num_rate_cps
 
         # Create change point times
-        self._create_change_point_times(mem_change, rate_change, group_merge, mem_change_times, 
-                                        rate_change_times, group_merge_times,
+        self._create_change_point_times(mem_change, rate_change, group_num_change, mem_change_times, 
+                                        rate_change_times, group_num_change_times,
                                         num_mem_cps, num_rate_cps)
-        groups_in_regions = self._create_node_memberships(group_sizes, mem_change_nodes,
-                                                          groups_to_merge)
+
+        groups_in_regions = self._create_node_memberships(group_sizes, mem_change_nodes)
         # Create rate matrices
         if rate_matrices is None:
             self._create_rate_matrices(sigma=2, entries_to_change=entries_to_change)
@@ -432,7 +458,7 @@ class PoissonNetwork(BaseNetwork):
         ###
         # STEP 2
         ###
-        adjacency_matrix = self._sample_adjancency_matrix(groups_in_regions)
+        adjacency_matrix = self._sample_adjancency_matrix(groups_in_regions, self.sparsity)
         self.adjacency_matrix = adjacency_matrix
 
         ###
@@ -487,10 +513,10 @@ class PoissonNetwork(BaseNetwork):
                                     t_end=self.T_max)
                         )
                     ###
-                    # GROUP MERGE
+                    # VARYING NUMBER OF GROUPS
                     ###
-                    elif (group_merge):
-                        num_group_merges = 1
+                    elif (group_num_change):
+                        num_group_changes = len(group_num_change_times)
                         # Run from start to first CP
                         # Map node i and j to their groups
                         group_i = groups_in_regions[0][i]
@@ -498,10 +524,10 @@ class PoissonNetwork(BaseNetwork):
 
                         network[i][j] += (
                             self._sample_single_edge(self.lam_matrix[group_i,group_j],
-                                    t_start=0, t_end=self.group_merge_times[0])
+                                    t_start=0, t_end=self.group_num_change_times[0])
                         )
                         # Iterate over CPs
-                        for cp in range(1, num_group_merges):
+                        for cp in range(1, num_group_changes):
                             # Map node i and j to their groups
                             group_i = groups_in_regions[cp][i]
                             group_j = groups_in_regions[cp][j]
@@ -510,18 +536,18 @@ class PoissonNetwork(BaseNetwork):
                             else:
                                 network[i][j] += (
                                     self._sample_single_edge(self.lam_matrix[group_i,group_j],
-                                            t_start=self.group_merge_times[cp-1], 
-                                            t_end=self.group_merge_times[cp])
+                                            t_start=self.group_num_change_times[cp-1], 
+                                            t_end=self.group_num_change_times[cp])
                                 )
                         # From final CP to the end
-                        if num_group_merges == 1:
+                        if num_group_changes == 1:
                             cp = 0
-                        group_i = groups_in_regions[num_group_merges][i]
-                        group_j = groups_in_regions[num_group_merges][j]
+                        group_i = groups_in_regions[num_group_changes][i]
+                        group_j = groups_in_regions[num_group_changes][j]
 
                         network[i][j] += (
                             self._sample_single_edge(self.lam_matrix[group_i,group_j],
-                                    t_start=self.group_merge_times[num_group_merges-1], 
+                                    t_start=self.group_num_change_times[num_group_changes-1], 
                                     t_end=self.T_max)
                         )
                     ###
