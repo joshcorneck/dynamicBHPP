@@ -91,9 +91,9 @@ class VariationalBayes:
         
         ## Sampling parameters
         if self.burn_in_bool:
-            self.intervals = np.arange(burn_in_length, T_max, int_length)
+            self.intervals = np.arange(burn_in_length, T_max + int_length, int_length)
         else:
-            self.intervals = np.arange(int_length, T_max, int_length)
+            self.intervals = np.arange(int_length, T_max + int_length, int_length)
         self.int_length = int_length
         # Arrays to store the effective counts and observation time.
         self.eff_count = np.zeros((self.num_nodes, self.num_nodes))
@@ -429,7 +429,8 @@ class VariationalBayes:
         )
 
     def run_full_var_bayes(self, delta_pi: float=1, delta_lam: float=1, 
-                           delta_rho:float=1, n_cavi: int=2):
+                           delta_rho:float=1, n_cavi: int=2, 
+                           burn_in: float=1):
         """
         A method to run the variational Bayesian update in its entirety.
         Parameters:
@@ -524,18 +525,21 @@ class VariationalBayes:
             # Store parameter value
             self.gamma_store[0,:] = self.gamma
 
+        ## List for storing flagged changes
+        self.flagged_changes_list = []
+
         ## Run the VB inference procedure            
         for it_num, update_time in enumerate(self.intervals):
             if ((self.burn_in_bool) & (it_num == 0)):
                 ## Run the burn-in
-                print(f"...Running burn-in computation...", end='\r')
+                print(f"...Running burn-in computation...")
 
                 ## Temporarily set the interval length to the burn-in time. 
                 self.int_length = self.burn_in_length
             
             else:
                 ## Run remaining runs
-                print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...", end='\r')
+                print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...")
 
                 ## Reset the interval length
                 self.int_length = self.int_length_temp
@@ -590,6 +594,18 @@ class VariationalBayes:
             #                                         self.beta_store[it_num,i,j],
             #                                         self.beta[i,j]
             #                                         )
+                
+            # Detect if any changes
+            if update_time == burn_in:
+                pred_groups_old = self.tau.argmax(axis=1)
+            elif update_time > burn_in:
+                pred_groups_curr = self.tau.argmax(axis=1)
+                num_flagged_changes = (
+                    (pred_groups_curr != pred_groups_old).sum()
+                )
+                pred_groups_old = pred_groups_curr.copy()
+                self.flagged_changes_list.append([update_time, num_flagged_changes])
+
 
             ## Store estimates
             self.tau_store[it_num + 1,:,:] = self.tau
@@ -604,5 +620,4 @@ class VariationalBayes:
                     self.zeta_store[it_num + 1,:,:] = self.zeta
                 self.gamma_store[it_num + 1,:] = self.gamma
 
-            print(self.tau.mean(axis=0))
-            print(self.alpha / self.beta)
+            

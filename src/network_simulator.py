@@ -57,7 +57,7 @@ class PoissonNetwork(BaseNetwork):
     def _create_change_point_times(self, mem_change: bool, rate_change: bool, group_num_change:bool,
                                    mem_change_times: list, rate_change_times: list, 
                                    group_num_change_times: list, num_mem_cps: int, 
-                                   num_rate_cps: int):
+                                   num_rate_cps: int): 
         """
         Create a list of the relevant change point times. The user can supply the change
         times, or they can be randomly sampled.
@@ -274,6 +274,11 @@ class PoissonNetwork(BaseNetwork):
             return groups_in_regions
         
         else:
+            # Initial group assignments
+            initial_groups = np.array(
+                list(flatten([[i]*j for i,j in enumerate(group_sizes)]))
+            )
+
             return initial_groups
         
     def _create_rate_matrices(self, sigma: float, entries_to_change: list):
