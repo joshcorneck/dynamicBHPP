@@ -2,6 +2,7 @@ import numpy as np
 import pickle
 import os
 import json
+import time
 
 from src.variational_bayes import VariationalBayes
 from src.network_simulator import PoissonNetwork
@@ -40,7 +41,7 @@ n_cavi = int(data[5])
 int_length = float(data[6])
 delta = float(data[7])
 T_max = float(data[8])
-num_mem_changes = int(data[9])
+num_rate_changes = int(data[9])
 
 # Extract the group sizes
 group_sizes = (group_props * num_nodes).astype('int')
@@ -52,21 +53,40 @@ if missing_nodes != 0:
         group_sizes[np.where(group_sizes == 0)] = missing_nodes
     else:
         group_sizes[-1] += missing_nodes
-    
-# Create membership change times
-mem_change_times = np.random.uniform(2, T_max, (num_mem_changes, ))
-mem_change_times = np.sort(mem_change_times)
-with open(f'param_output/mem_change_times_{pbs_index}.pkl','wb') as f:
-        pickle.dump(mem_change_times, f)
-        f.close()
 
-# Create nodes to change
-mem_change_nodes = (
-    np.random.choice(np.arange(num_nodes), size=num_mem_changes, replace=False)
+## Function for sampling rate change times
+def sample_numbers_with_min_distance(B, num_rate_changes, T_max, cp_start_time,
+                                     timeout=1):
+
+    sampled_numbers = []
+    sampled_numbers.append(np.random.uniform(cp_start_time, T_max - B))
+    
+    # Sample subsequent numbers ensuring minimum distance
+    for _ in range(1, num_rate_changes):
+        
+        new_number = np.random.uniform(cp_start_time, T_max - B)
+        
+        # Ensure minimum distance from previous sampled numbers
+        # Start timer to ensure not getting stuck
+        start_time = time.time()
+        while any(abs(new_number - x) < B for x in sampled_numbers):
+            new_number = np.random.uniform(cp_start_time, T_max)
+            if time.time() - start_time > timeout:
+                print("Timeout reached. Restarting...")
+                return sample_numbers_with_min_distance(
+                    B, num_rate_changes, T_max, cp_start_time)
+        
+        sampled_numbers.append(new_number)
+    
+    return sampled_numbers
+    
+# Create rate change times
+rate_change_times = np.sort(
+    sample_numbers_with_min_distance(0.4, num_rate_changes, T_max, 2)
     )
-with open(f'param_output/mem_change_nodes_{pbs_index}.pkl','wb') as f:
-    pickle.dump(mem_change_nodes, f)
-    f.close()
+with open(f'param_output/true_changes/rate_change_times_{pbs_index}.pkl','wb') as f:
+        pickle.dump(rate_change_times, f)
+        f.close()
 
 for glob_iteration in range(N_runs):
 
@@ -87,12 +107,15 @@ for glob_iteration in range(N_runs):
     sampled_network, groups_in_regions = (
         PN.sample_network(group_sizes=group_sizes,
                           rate_change=True,
-                          rate_change_times=mem_change_times,
-                          mem_change_nodes=mem_change_nodes)
+                          rate_change_times=rate_change_times
+                          )
         )
 
-
     adj_mat = PN.adjacency_matrix
+
+    with open(f'param_output/true_changes/rate_matrices_{pbs_index}_{glob_iteration}.pkl','wb') as f:
+        pickle.dump(PN.lam_matrices, f)
+        f.close()
 
     print("...Network simulated...")
 
@@ -111,13 +134,17 @@ for glob_iteration in range(N_runs):
                           gamma_0 = np.array([0.99, 1.01]),
                           adj_mat=adj_mat,
                           int_length=int_length,
-                          T_max=T_max,
-                          burn_in_bool=False)
+                          T_max=T_max
+                          )
     VB.run_full_var_bayes(delta_pi=delta,
                           delta_rho=delta,
                           delta_lam=delta,
                           n_cavi=n_cavi,
-                          burn_in=1)
+                          cp_burn_steps=10,
+                          cp_kl_lag_steps=2,
+                          cp_kl_thresh=10,
+                          cp_rate_wait=0.4
+                          )
     
     print("...Inference procedure completed...")
 
@@ -126,26 +153,26 @@ for glob_iteration in range(N_runs):
     ###
 
     tau_store = VB.tau_store
-    with open(f'param_output/tau_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
+    with open(f'param_output/tau/tau_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
         pickle.dump(tau_store, f)
     f.close()
 
     gamma_store = VB.gamma_store
-    with open(f'param_output/gamma_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
+    with open(f'param_output/gamma/gamma_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
         pickle.dump(gamma_store, f)
     f.close()
 
     alpha_store = VB.alpha_store
-    with open(f'param_output/alpha_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
+    with open(f'param_output/alpha/alpha_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
         pickle.dump(alpha_store, f)
     f.close()
 
     beta_store = VB.beta_store
-    with open(f'param_output/beta_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
+    with open(f'param_output/beta/beta_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
         pickle.dump(beta_store, f)
     f.close()
 
-    flagged_changes = np.array(VB.flagged_changes_list)
-    with open(f'param_output/changes_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
+    flagged_changes = np.array(VB.rate_changes_list)
+    with open(f'param_output/inf_changes/changes_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
         pickle.dump(flagged_changes, f)
     f.close()

@@ -1,6 +1,7 @@
 from typing import Dict
 import numpy as np
 from scipy.special import gammaln, digamma, logsumexp
+from scipy.stats import median_abs_deviation
 
 class VariationalBayes:
 
@@ -10,7 +11,7 @@ class VariationalBayes:
                  infer_graph_bool: bool=False, sigma_0: np.array=None, eta_0: np.array=None, 
                  zeta_0: np.array=None, infer_num_groups_bool: bool=False, 
                  num_var_groups: int=None, nu_0: float=None, int_length: float=1, 
-                 T_max: float=50, burn_in_bool: bool=True, burn_in_length: int=None) -> None:
+                 T_max: float=50) -> None:
         
         """
         A class to run a full variational Bayesian inference procedure for a network
@@ -36,12 +37,6 @@ class VariationalBayes:
                      from 0).
         """
         ## Run necessary checks on inputs
-        self.burn_in_bool = burn_in_bool
-        if burn_in_bool:
-            if burn_in_length is None:
-                raise ValueError("""You must supply a burn-in by passing an integer
-                                value for burn_in_length""")
-        self.burn_in_length = burn_in_length
         if (adj_mat is not None) & (infer_graph_bool):
             raise ValueError("""You can't supply an adjacency matrix and set
                             infer_graph_bool = True.""")
@@ -90,10 +85,7 @@ class VariationalBayes:
         self.T_max = T_max; self.sampled_network = sampled_network
         
         ## Sampling parameters
-        if self.burn_in_bool:
-            self.intervals = np.arange(burn_in_length, T_max + int_length, int_length)
-        else:
-            self.intervals = np.arange(int_length, T_max + int_length, int_length)
+        self.intervals = np.arange(int_length, T_max + int_length, int_length)
         self.int_length = int_length
         # Arrays to store the effective counts and observation time.
         self.eff_count = np.zeros((self.num_nodes, self.num_nodes))
@@ -415,28 +407,65 @@ class VariationalBayes:
             self.nu[j] = sum_term.sum() + self.nu_prior[j]
 
 
-    def _KL_div_gammas(self, a1, a2, b1, b2):
+    def _MAD_KL_outlier_detector(self, alpha, beta, max_lag, cutoff):
         """
-        A methdod to compute the KL divergence between the approximate posteriors
-        of lambda at two distinct update points.
-        Parameters:
-            - a1, b1: the rate and scale of the approx posterior from t-1.
-            - a2, b2: the rate and scale of the approx posterior from t.
+        The function takes data contains all points up to and including
+        the current update time, assuming that the burn-in points aren't 
+        included. 
         """
-        return (
-            a2 * np.log(b1 / b2) - gammaln(a1) + gammaln(a2) +
-            (a1 - a2) * digamma(a1) - (b1 - b2) * a1 / b1
-        )
+        ## Compute the KL-divergences off all lags up to current lag
+        kl_lag_list = list()
+        kl_curr_datum_list = list()
+        for lag in range(1, max_lag + 1):
+            alpha_1 = alpha[max_lag:]; alpha_2 = alpha[(max_lag - lag):-lag]
+            beta_1 = beta[max_lag:]; beta_2 = beta[(max_lag - lag):-lag]
+            kl_lag = (
+                alpha_2 * np.log(beta_1 / beta_2) - 
+                gammaln(alpha_1) + gammaln(alpha_2) +
+                (alpha_1 - alpha_2) * digamma(alpha_1) -
+                (beta_1 - beta_2) * alpha_1 / beta_1
+            )
+            kl_curr_datum_list.append(kl_lag[-1])
+            kl_lag_list.append(kl_lag[:-1])
+        kl_curr_datum = np.array(kl_curr_datum_list)
+        kl_lag = np.concatenate(kl_lag_list)
+
+        ## Compute the current MAD and the deviation of the current datum
+        # Current MAD (excluding current datum)
+        curr_MAD = median_abs_deviation(kl_lag)
+        # Deviation of current datum (for each lag up to max_lag)
+        MAD_deviation_lags = []
+        for i in range(max_lag):
+            MAD_deviation_lags.append(
+                np.abs(kl_curr_datum[i] - np.median(kl_lag)) / curr_MAD
+                )
+        # Flag as a change point if all lags are greater than the cutoff
+        if np.all(np.array(MAD_deviation_lags) > cutoff):
+            return 1
+        else: 
+            return 0
 
     def run_full_var_bayes(self, delta_pi: float=1, delta_lam: float=1, 
                            delta_rho:float=1, n_cavi: int=2, 
-                           burn_in: float=1):
+                           cp_burn_steps: float=10, cp_kl_lag_steps: int=2,
+                           cp_kl_thresh: float=10, cp_rate_wait: float=0.5):
         """
         A method to run the variational Bayesian update in its entirety.
         Parameters:
             - delta_pi, delta_rho, delta_lam: decay values.
             - n_cavi: the number of CAVI iterations at each run.
+            - cp_burn_steps: the number of steps we allow up until we start to track 
+                             change point metrics.
+            - cp_kl_lag_steps: maximum lag (IN NUMBER OF STEPS) we consider for 
+                               the KL flag.
+            - cp_kl_thresh: the threshold for the MAD-KL flag.
+            - cp_rate_wait: the assumed time of stationarity between changes
+                            to the rate of the process.
         """
+        ## Transform steps to time
+        cp_burn_time = cp_burn_steps * self.int_length
+        cp_kl_lag_time = cp_kl_lag_steps * self.int_length
+
         ## Decay rates for the prior
         self.delta_pi = delta_pi
         self.delta_rho = delta_rho
@@ -481,7 +510,8 @@ class VariationalBayes:
         ## Initialise relevant parameters if needed
         if self.infer_num_groups_bool:
             self.tau_prior = (
-                np.array([1 / self.num_var_groups] * (self.num_nodes * self.num_var_groups))
+                np.array([1 / self.num_var_groups] * 
+                         (self.num_nodes * self.num_var_groups))
                 .reshape((self.num_nodes, self.num_var_groups))
             )
         else:
@@ -526,23 +556,17 @@ class VariationalBayes:
             self.gamma_store[0,:] = self.gamma
 
         ## List for storing flagged changes
-        self.flagged_changes_list = []
+        self.group_changes_list = []
+        self.rate_changes_list = []
+        prev_change_time = 0
 
         ## Run the VB inference procedure            
         for it_num, update_time in enumerate(self.intervals):
-            if ((self.burn_in_bool) & (it_num == 0)):
-                ## Run the burn-in
-                print(f"...Running burn-in computation...")
+            ## Run remaining runs
+            print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...")
 
-                ## Temporarily set the interval length to the burn-in time. 
-                self.int_length = self.burn_in_length
-            
-            else:
-                ## Run remaining runs
-                print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...")
-
-                ## Reset the interval length
-                self.int_length = self.int_length_temp
+            ## Reset the interval length
+            self.int_length = self.int_length_temp
 
             ## Compute counts in the interval
             self._compute_eff_count(update_time)
@@ -584,27 +608,52 @@ class VariationalBayes:
                     self.eta_prior = self.eta.copy()
                     self.zeta_prior = self.zeta.copy()
                 self.gamma_prior = self.gamma.copy()
-
-            # Compute the KL-divergence for each rate parameter
-            # for i in range(self.num_groups):
-            #     for j in range(self.num_groups):
-            #         self.KL_div[it_num,i,j] = self._KL_div_gammas(
-            #                                         self.alpha_store[it_num,i,j],
-            #                                         self.alpha[i,j],
-            #                                         self.beta_store[it_num,i,j],
-            #                                         self.beta[i,j]
-            #                                         )
                 
-            # Detect if any changes
-            if update_time == burn_in:
+            ## Detect if any change points
+            # Zero indexing
+            if (it_num + 1) == cp_burn_steps:
+                # Current predicted group values
                 pred_groups_old = self.tau.argmax(axis=1)
-            elif update_time > burn_in:
+            elif (it_num + 1) > cp_burn_steps:
+                ## Group changes
+                # Current predicted group values
                 pred_groups_curr = self.tau.argmax(axis=1)
-                num_flagged_changes = (
+                num_group_changes = (
                     (pred_groups_curr != pred_groups_old).sum()
                 )
+                changing_nodes = np.argwhere(
+                    pred_groups_curr != pred_groups_old
+                ).flatten()
                 pred_groups_old = pred_groups_curr.copy()
-                self.flagged_changes_list.append([update_time, num_flagged_changes])
+                self.group_changes_list.append([update_time, 
+                                                num_group_changes,
+                                                changing_nodes]
+                                                )
+
+                ## Rate changes
+                # Only start to track changes after cp_burn_steps + max_lag runs
+                if (it_num + 1) > (cp_burn_steps + cp_kl_lag_steps):       
+                    for j in range(self.num_groups):
+                        for k in range(self.num_groups):
+                            # +1 on the index to include current point
+                            alpha_burned = (
+                                self.alpha_store[cp_burn_steps:(it_num + 1), j, k]
+                            )
+                            beta_burned = (
+                                self.beta_store[cp_burn_steps:(it_num + 1), j, k]
+                            )
+                            cp_flag = self._MAD_KL_outlier_detector(
+                                        alpha_burned, beta_burned, 
+                                        cp_kl_lag_steps, cp_kl_thresh
+                                        )
+                            if cp_flag:
+                                curr_change_time = update_time
+                                if curr_change_time - prev_change_time > cp_rate_wait:
+                                    self.rate_changes_list.append(
+                                        [update_time, j, k]
+                                        )
+                                    prev_change_time = curr_change_time
+
 
 
             ## Store estimates
@@ -619,5 +668,10 @@ class VariationalBayes:
                     self.eta_store[it_num + 1,:,:] = self.eta
                     self.zeta_store[it_num + 1,:,:] = self.zeta
                 self.gamma_store[it_num + 1,:] = self.gamma
+
+            print(f"Group props: {self.tau.mean(axis=0)}")
+
+            # Update delta_lam
+            # self.delta_lam = 
 
             

@@ -15,14 +15,14 @@ rho_mat = [[[1, 1], [1, 1]]]
 
 
 # Other simulation and inference parameters
-num_nodes_set = [100, 500]
+num_nodes_set = [100, 250, 500]
 num_groups_set = [2]
 group_props_set = [[0.1, 0.9], [0.4, 0.6]]
 n_cavi_set = [3]
 int_length_set = [0.1]
-delta_set = [0.1, 1]
+delta_set = [0.1, 0.5, 1]
 T_max = [10]
-num_mem_changes = [10, 25, 50]
+num_rate_changes = [15]
 
 all_combinations = list(
     itertools.product(lam_mat,
@@ -34,7 +34,7 @@ all_combinations = list(
                       int_length_set,
                       delta_set, 
                       T_max,
-                      num_mem_changes)
+                      num_rate_changes)
 )
 
 with open("analyses/simulation_studies/"
