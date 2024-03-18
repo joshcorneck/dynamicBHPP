@@ -669,7 +669,7 @@ class VariationalBayes:
                     self.zeta_store[it_num + 1,:,:] = self.zeta
                 self.gamma_store[it_num + 1,:] = self.gamma
 
-            print(f"Group props: {self.tau.mean(axis=0)}")
+            print(f"Rate matrix: {self.alpha / self.beta}")
 
             # Update delta_lam
             # self.delta_lam = 

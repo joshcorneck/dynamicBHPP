@@ -40,6 +40,7 @@ n_cavi = int(data[5])
 int_length = float(data[6])
 delta = float(data[7])
 T_max = float(data[8])
+prop_swap = float(data[9])
 
 # Extract the group sizes
 group_sizes = (group_props * num_nodes).astype('int')
@@ -52,10 +53,8 @@ if missing_nodes != 0:
     else:
         group_sizes[-1] += missing_nodes
 
-print(f"""
-    Number of nodes: {num_nodes}
-    Delta: {delta},
-    Group sizes: {group_sizes}""")
+mem_change_nodes = np.arange(int(group_sizes[0] * prop_swap))
+mem_change_times = np.tile([2], len(mem_change_nodes))
 
 for glob_iteration in range(N_runs):
 
@@ -74,7 +73,10 @@ for glob_iteration in range(N_runs):
                         lam_matrix=lam_matrix)
 
     sampled_network, groups_in_regions = (
-        PN.sample_network(group_sizes=group_sizes)
+        PN.sample_network(group_sizes=group_sizes,
+                          mem_change=True,
+                          mem_change_times=mem_change_times,
+                          mem_change_nodes=mem_change_nodes)
         )
 
 
@@ -97,8 +99,7 @@ for glob_iteration in range(N_runs):
                           gamma_0 = np.array([0.99, 1.01]),
                           adj_mat=adj_mat,
                           int_length=int_length,
-                          T_max=T_max,
-                          burn_in_bool=False)
+                          T_max=T_max)
     VB.run_full_var_bayes(delta_pi=delta,
                           delta_rho=delta,
                           delta_lam=delta,

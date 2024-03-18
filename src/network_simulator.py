@@ -234,20 +234,41 @@ class PoissonNetwork(BaseNetwork):
                 list(flatten([[i]*j for i,j in enumerate(group_sizes)]))
             )
 
+            # Get a numpy array of num_changing. Value of num_changing is the number of nodes 
+            # changing membership at that time
+            unique_change_times, num_changing = np.unique(self.mem_change_point_times, 
+                                                return_counts=True)
+            # Number of unique change times
+            self.unique_change_times = unique_change_times
+            self.num_unique_cps = len(unique_change_times)
+
             # Create a list of lists in which we have the group assignments in each region.
             groups_in_regions = []
             groups_in_regions.append(initial_groups)
             # Copy orginal group array
             groups_cps = initial_groups.copy()
-            # Iterate over change points
-            for cp in range(self.num_mem_cps):
-                old_group = groups_cps[mem_change_nodes[cp]]
-                new_group = old_group
-                while new_group == old_group:
-                    new_group = np.random.randint(0, self.num_groups)
-                groups_cps[mem_change_nodes[cp]] = new_group 
-                groups_in_regions.append(groups_cps.copy())
 
+            # Iterate over change points
+            if (self.num_unique_cps == self.num_mem_cps):
+                for cp in range(self.num_unique_cps):
+                    old_group = groups_cps[mem_change_nodes[cp]]
+                    new_group = old_group
+                    while new_group == old_group:
+                        new_group = np.random.randint(0, self.num_groups)
+                    groups_cps[mem_change_nodes[cp]] = new_group 
+                    groups_in_regions.append(groups_cps.copy())
+            elif self.num_unique_cps != 1:
+                raise ValueError("""Currently there is only functionality to accomodate
+                                 one time stap that corresponds to simulataneous swaps.""")
+            else:
+                for node in mem_change_nodes:
+                    old_group = groups_cps[mem_change_nodes[node]]
+                    new_group = old_group
+                    while new_group == old_group:
+                        new_group = np.random.randint(0, self.num_groups)
+                    groups_cps[mem_change_nodes[node]] = new_group 
+                groups_in_regions.append(groups_cps.copy())
+    
             return groups_in_regions
         
         ## Create assignments for changing number of groups
@@ -379,7 +400,8 @@ class PoissonNetwork(BaseNetwork):
             #                         can be any of "sequential",  "alternate" or "random".
             - group_sizes: the number of nodes in each group (must sum to num_nodes).
             - mem_change_point_times: the times of the changes (must have length equal to num_mem_cps).
-            - mem_change_nodes: the nodes that change at each change point (must have length equal to num_mem_cps).
+            - mem_change_nodes: the nodes that change at each change point (must have length equal to 
+                                num_mem_cps).
             - entries_to_change: the entry of the rate matrix that changes at each change point.
             - rate_matrices: list of rate matrices.
         """
@@ -493,28 +515,27 @@ class PoissonNetwork(BaseNetwork):
                                     t_start=0, t_end=self.mem_change_point_times[0])
                         )
                         # Iterate over CPs
-                        for cp in range(1, num_mem_cps):
+                        for cp in range(1, self.num_unique_cps):
                             # Map node i and j to their groups
                             group_i = groups_in_regions[cp][i]
                             group_j = groups_in_regions[cp][j]
                             if j == i:
                                 network[i][j] = None
                             else:
-
                                 network[i][j] += (
                                     self._sample_single_edge(self.lam_matrix[group_i,group_j],
                                             t_start=self.mem_change_point_times[cp-1], 
                                             t_end=self.mem_change_point_times[cp])
                                 )
                         # From final CP to the end
-                        if num_mem_cps == 1:
+                        if self.num_unique_cps == 1:
                             cp = 0
-                        group_i = groups_in_regions[num_mem_cps][i]
-                        group_j = groups_in_regions[num_mem_cps][j]
+                        group_i = groups_in_regions[self.num_unique_cps][i]
+                        group_j = groups_in_regions[self.num_unique_cps][j]
 
                         network[i][j] += (
                             self._sample_single_edge(self.lam_matrix[group_i,group_j],
-                                    t_start=self.mem_change_point_times[num_mem_cps-1], 
+                                    t_start=self.unique_change_times[0], 
                                     t_end=self.T_max)
                         )
                     ###

@@ -4,7 +4,7 @@
 #PBS -o ${HOME}/online_networks/code/simulation_studies/simulation_study_1/o_files/output.log
 #PBS -e ${HOME}/online_networks/code/simulation_studies/simulation_study_1/e_files/error.log
 #PBS -q parallel16
-#PBS -t 0-143
+#PBS -t 0-13
 
 cd ${HOME}/online_networks/code/simulation_studies/simulation_study_1
 
