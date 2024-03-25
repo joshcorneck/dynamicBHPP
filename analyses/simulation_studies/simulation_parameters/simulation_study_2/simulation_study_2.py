@@ -31,7 +31,8 @@ with open('sim_params_simulation_study_2.json', 'r') as file:
     full_data = json.load(file)
     data = full_data[pbs_index]
 
-lam_matrix = np.array(data[0])
+rate_matrices = list(data[0])
+rate_matrices = [np.array(x) for x in rate_matrices]
 rho_matrix = np.array(data[1])
 num_nodes = int(data[2])
 num_groups = int(data[3])
@@ -40,7 +41,12 @@ n_cavi = int(data[5])
 int_length = float(data[6])
 delta = float(data[7])
 T_max = float(data[8])
-num_mem_changes = int(data[9])
+change_steps_gap = int(data[9])
+
+# Rate change times
+first_change = 3
+second_change = first_change + change_steps_gap * int_length
+rate_change_times = np.array([first_change, second_change])
 
 # Extract the group sizes
 group_sizes = (group_props * num_nodes).astype('int')
@@ -52,21 +58,6 @@ if missing_nodes != 0:
         group_sizes[np.where(group_sizes == 0)] = missing_nodes
     else:
         group_sizes[-1] += missing_nodes
-    
-# Create membership change times
-mem_change_times = np.random.uniform(2, T_max, (num_mem_changes, ))
-mem_change_times = np.sort(mem_change_times)
-with open(f'param_output/mem_change_times_{pbs_index}.pkl','wb') as f:
-        pickle.dump(mem_change_times, f)
-        f.close()
-
-# Create nodes to change
-mem_change_nodes = (
-    np.random.choice(np.arange(num_nodes), size=num_mem_changes, replace=False)
-    )
-with open(f'param_output/mem_change_nodes_{pbs_index}.pkl','wb') as f:
-    pickle.dump(mem_change_nodes, f)
-    f.close()
 
 for glob_iteration in range(N_runs):
 
@@ -80,15 +71,14 @@ for glob_iteration in range(N_runs):
 
     PN = PoissonNetwork(num_nodes=num_nodes, 
                         num_groups=num_groups, 
-                        T_max=T_max, 
-                        rho_matrix=rho_matrix, 
-                        lam_matrix=lam_matrix)
+                        T_max=T_max,
+                        lam_matrix=rate_matrices[0])
 
     sampled_network, groups_in_regions = (
         PN.sample_network(group_sizes=group_sizes,
-                          mem_change=True,
-                          mem_change_times=mem_change_times,
-                          mem_change_nodes=mem_change_nodes)
+                          rate_change=True,
+                          rate_change_times=rate_change_times,
+                          rate_matrices=rate_matrices)
         )
 
 
@@ -111,13 +101,15 @@ for glob_iteration in range(N_runs):
                           gamma_0 = np.array([0.99, 1.01]),
                           adj_mat=adj_mat,
                           int_length=int_length,
-                          T_max=T_max,
-                          burn_in_bool=False)
+                          T_max=T_max)
     VB.run_full_var_bayes(delta_pi=delta,
-                          delta_rho=delta,
-                          delta_lam=delta,
-                          n_cavi=n_cavi,
-                          burn_in=1)
+                        delta_rho=delta,
+                        delta_lam=delta,
+                        n_cavi=n_cavi,
+                        cp_kl_lag_steps=2,
+                        cp_burn_steps=10,
+                        cp_kl_thresh=100,
+                        cp_rate_wait=0)
     
     print("...Inference procedure completed...")
 
@@ -145,7 +137,7 @@ for glob_iteration in range(N_runs):
         pickle.dump(beta_store, f)
     f.close()
 
-    flagged_changes = np.array(VB.flagged_changes_list)
+    flagged_changes = np.array(VB.rate_changes_list)
     with open(f'param_output/changes_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
         pickle.dump(flagged_changes, f)
     f.close()

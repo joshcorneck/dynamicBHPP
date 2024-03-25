@@ -8,8 +8,8 @@ class VariationalBayes:
     def __init__(self, sampled_network: Dict[int, Dict[int, list]]=None, 
                  num_nodes: int=None, num_groups: int=None, alpha_0: float=None, 
                  beta_0: float=None, gamma_0: np.array=None, adj_mat: np.array=None,
-                 infer_graph_bool: bool=False, sigma_0: np.array=None, eta_0: np.array=None, 
-                 zeta_0: np.array=None, infer_num_groups_bool: bool=False, 
+                 infer_graph_bool: bool=False, sigma_0: np.array=None, eta_0: float=None, 
+                 zeta_0: float=None, infer_num_groups_bool: bool=False, 
                  num_var_groups: int=None, nu_0: float=None, int_length: float=1, 
                  T_max: float=50) -> None:
         
@@ -102,8 +102,10 @@ class VariationalBayes:
             if zeta_0 is None:
                 raise ValueError("Supply zeta_0.")
             self.sigma_0 = sigma_0
-            self.eta_prior = eta_0
-            self.zeta_prior = zeta_0
+            self.eta_prior = np.tile([eta_0], 
+                                    (num_groups, num_groups))
+            self.zeta_prior = np.tile([zeta_0], 
+                                    (num_groups, num_groups))
             self.sigma = np.zeros((self.num_nodes, self.num_nodes))
 
         if alpha_0 is None:
@@ -202,7 +204,7 @@ class VariationalBayes:
                 if i == j:
                     pass
                 else:
-                    if self.eff_count[i,j] == 0:
+                    if ((self.eff_count[i,j] == 0) & (self.sigma[i,j] != 1)):
                         log_r = r_sum_term(i,j)
                         log_s = s_sum_term(i,j)
 
@@ -359,6 +361,7 @@ class VariationalBayes:
 
         # Convert to exponential and normalise using logsumexp
         self.tau = np.exp(tau_temp - logsumexp(tau_temp, axis=1)[:,None])
+        self.tau_prior = self.tau.copy()
 
     def _update_q_pi(self):
         """
@@ -392,6 +395,11 @@ class VariationalBayes:
                     self.tau.T @ had_prod_x_sig @ self.tau + 1)
         self.beta = (self.delta_lam * self.beta_prior + 
                     self.int_length * self.tau.T @ self.sigma @ self.tau)
+        
+        # Adjust delta matrix for empty groups
+        empty_groups_bool = self.tau.T @ self.sigma @ self.tau < 0.1
+        self.delta_lam[empty_groups_bool] = 1
+        self.delta_lam[~empty_groups_bool] = self.delta_lam_BFF
             
     def _update_q_u(self):
         """
@@ -425,8 +433,12 @@ class VariationalBayes:
                 (alpha_1 - alpha_2) * digamma(alpha_1) -
                 (beta_1 - beta_2) * alpha_1 / beta_1
             )
-            kl_curr_datum_list.append(kl_lag[-1])
-            kl_lag_list.append(kl_lag[:-1])
+            if lag == max_lag:
+                kl_curr_datum_list.append(kl_lag[-1])
+                kl_lag_list.append(kl_lag[:-1])
+            else:
+                kl_curr_datum_list.append(kl_lag[-(max_lag - lag)])
+                kl_lag_list.append(kl_lag[:(max_lag - lag)])
         kl_curr_datum = np.array(kl_curr_datum_list)
         kl_lag = np.concatenate(kl_lag_list)
 
@@ -447,8 +459,9 @@ class VariationalBayes:
 
     def run_full_var_bayes(self, delta_pi: float=1, delta_lam: float=1, 
                            delta_rho:float=1, n_cavi: int=2, 
-                           cp_burn_steps: float=10, cp_kl_lag_steps: int=2,
-                           cp_kl_thresh: float=10, cp_rate_wait: float=0.5):
+                           cp_burn_steps: int=10, cp_stationary_steps: int=10,
+                           cp_kl_lag_steps: int=2, cp_kl_thresh: float=10, 
+                           cp_rate_wait: float=0.5, ARLO_bool: bool=False):
         """
         A method to run the variational Bayesian update in its entirety.
         Parameters:
@@ -469,7 +482,13 @@ class VariationalBayes:
         ## Decay rates for the prior
         self.delta_pi = delta_pi
         self.delta_rho = delta_rho
-        self.delta_lam = delta_lam
+        self.delta_lam_BFF = delta_lam
+        if self.infer_num_groups_bool:
+            self.delta_lam = np.ones((self.num_var_groups, 
+                                      self.num_var_groups)) * delta_lam
+            
+        else:
+            self.delta_lam = np.ones((self.num_groups, self.num_groups)) * delta_lam
 
         ## Empty arrays for storage
         if self.infer_graph_bool:
@@ -605,6 +624,7 @@ class VariationalBayes:
                 self.omega_prior = self.omega.copy()
             else:
                 if self.infer_graph_bool:
+                    self.sigma_prior = self.sigma.copy()
                     self.eta_prior = self.eta.copy()
                     self.zeta_prior = self.zeta.copy()
                 self.gamma_prior = self.gamma.copy()
@@ -632,10 +652,13 @@ class VariationalBayes:
 
                 ## Rate changes
                 # Only start to track changes after cp_burn_steps + max_lag runs
-                if (it_num + 1) > (cp_burn_steps + cp_kl_lag_steps):       
-                    for j in range(self.num_groups):
-                        for k in range(self.num_groups):
-                            # +1 on the index to include current point
+                if (it_num + 1) > (cp_burn_steps + cp_kl_lag_steps):
+                    if self.infer_num_groups_bool:
+                        num_check_groups = self.num_var_groups
+                    else:
+                        num_check_groups = self.num_groups
+                    for j in range(num_check_groups):
+                        for k in range(num_check_groups):
                             alpha_burned = (
                                 self.alpha_store[cp_burn_steps:(it_num + 1), j, k]
                             )
@@ -649,12 +672,15 @@ class VariationalBayes:
                             if cp_flag:
                                 curr_change_time = update_time
                                 if curr_change_time - prev_change_time > cp_rate_wait:
-                                    self.rate_changes_list.append(
-                                        [update_time, j, k]
-                                        )
-                                    prev_change_time = curr_change_time
-
-
+                                    if (update_time - self.int_length > 
+                                        ((cp_stationary_steps + cp_burn_steps) * self.int_length)):
+                                        self.rate_changes_list.append(
+                                            [update_time, update_time - self.int_length, j, k]
+                                            )
+                                        if ARLO_bool:
+                                            return update_time - self.int_length
+                                        else:
+                                            prev_change_time = curr_change_time
 
             ## Store estimates
             self.tau_store[it_num + 1,:,:] = self.tau
@@ -668,10 +694,3 @@ class VariationalBayes:
                     self.eta_store[it_num + 1,:,:] = self.eta
                     self.zeta_store[it_num + 1,:,:] = self.zeta
                 self.gamma_store[it_num + 1,:] = self.gamma
-
-            print(f"Rate matrix: {self.alpha / self.beta}")
-
-            # Update delta_lam
-            # self.delta_lam = 
-
-            

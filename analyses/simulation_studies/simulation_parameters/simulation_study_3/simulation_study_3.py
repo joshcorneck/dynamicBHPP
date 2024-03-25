@@ -2,7 +2,6 @@ import numpy as np
 import pickle
 import os
 import json
-import time
 
 from src.variational_bayes import VariationalBayes
 from src.network_simulator import PoissonNetwork
@@ -36,57 +35,14 @@ lam_matrix = np.array(data[0])
 rho_matrix = np.array(data[1])
 num_nodes = int(data[2])
 num_groups = int(data[3])
-group_props = np.array(data[4])
+group_sizes = [np.array(x) for x in data[4]]
 n_cavi = int(data[5])
 int_length = float(data[6])
 delta = float(data[7])
 T_max = float(data[8])
-num_rate_changes = int(data[9])
+second_change_time = float(data[9])
 
-# Extract the group sizes
-group_sizes = (group_props * num_nodes).astype('int')
-
-# Ensure that group_sizes sums to num_nodes and there are no empty groups
-missing_nodes = num_nodes - group_sizes.sum()
-if missing_nodes != 0:
-    if np.sum(np.where(group_sizes == 0)) != 0:
-        group_sizes[np.where(group_sizes == 0)] = missing_nodes
-    else:
-        group_sizes[-1] += missing_nodes
-
-## Function for sampling rate change times
-def sample_numbers_with_min_distance(B, num_rate_changes, T_max, cp_start_time,
-                                     timeout=1):
-
-    sampled_numbers = []
-    sampled_numbers.append(np.random.uniform(cp_start_time, T_max - B))
-    
-    # Sample subsequent numbers ensuring minimum distance
-    for _ in range(1, num_rate_changes):
-        
-        new_number = np.random.uniform(cp_start_time, T_max - B)
-        
-        # Ensure minimum distance from previous sampled numbers
-        # Start timer to ensure not getting stuck
-        start_time = time.time()
-        while any(abs(new_number - x) < B for x in sampled_numbers):
-            new_number = np.random.uniform(cp_start_time, T_max)
-            if time.time() - start_time > timeout:
-                print("Timeout reached. Restarting...")
-                return sample_numbers_with_min_distance(
-                    B, num_rate_changes, T_max, cp_start_time)
-        
-        sampled_numbers.append(new_number)
-    
-    return sampled_numbers
-    
-# Create rate change times
-rate_change_times = np.sort(
-    sample_numbers_with_min_distance(0.4, num_rate_changes, T_max, 2)
-    )
-with open(f'param_output/true_changes/rate_change_times_{pbs_index}.pkl','wb') as f:
-        pickle.dump(rate_change_times, f)
-        f.close()
+group_num_change_times = [2, second_change_time]
 
 for glob_iteration in range(N_runs):
 
@@ -106,15 +62,15 @@ for glob_iteration in range(N_runs):
 
     sampled_network, groups_in_regions = (
         PN.sample_network(group_sizes=group_sizes,
-                          rate_change=True,
-                          rate_change_times=rate_change_times
+                          group_num_change=True,
+                          group_num_change_times=group_num_change_times  
                           )
         )
 
     adj_mat = PN.adjacency_matrix
 
-    with open(f'param_output/true_changes/rate_matrices_{pbs_index}_{glob_iteration}.pkl','wb') as f:
-        pickle.dump(PN.lam_matrices, f)
+    with open(f'param_output/true_changes/groups_in_regions_{pbs_index}_{glob_iteration}.pkl','wb') as f:
+        pickle.dump(groups_in_regions, f)
         f.close()
 
     print("...Network simulated...")
@@ -131,7 +87,8 @@ for glob_iteration in range(N_runs):
                           num_groups=num_groups, 
                           alpha_0=1, 
                           beta_0=1,
-                          gamma_0 = np.array([0.99, 1.01]),
+                          nu_0=1,
+                          infer_graph_bool=True,
                           adj_mat=adj_mat,
                           int_length=int_length,
                           T_max=T_max
@@ -140,10 +97,11 @@ for glob_iteration in range(N_runs):
                           delta_rho=delta,
                           delta_lam=delta,
                           n_cavi=n_cavi,
-                          cp_burn_steps=10,
+                          cp_burn_steps=5,
+                          cp_stationary_steps=10,
                           cp_kl_lag_steps=2,
-                          cp_kl_thresh=10,
-                          cp_rate_wait=0.4
+                          cp_kl_thresh=100,
+                          cp_rate_wait=0
                           )
     
     print("...Inference procedure completed...")
@@ -172,7 +130,3 @@ for glob_iteration in range(N_runs):
         pickle.dump(beta_store, f)
     f.close()
 
-    flagged_changes = np.array(VB.rate_changes_list)
-    with open(f'param_output/inf_changes/changes_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
-        pickle.dump(flagged_changes, f)
-    f.close()
