@@ -161,7 +161,7 @@ class PoissonNetwork(BaseNetwork):
                 self.rate_change_point_times = rate_change_times
             self.rate_change_point_times.sort()
 
-        # CASE 4: group merger
+        # CASE 4: group merge
         elif (group_num_change):
             # If not supplied, change times are randomly sampled.
             if group_num_change_times is None:
@@ -195,35 +195,7 @@ class PoissonNetwork(BaseNetwork):
                 raise ValueError("Ensure the group sizes sum to the total number of nodes.")
             if group_sizes.shape[0] != self.num_groups:
                 raise ValueError("Ensure that group_sizes shape matches the number of groups.")
-
-        # # Order the nodes to match the desired split of group assignments
-        # if group_assignment_type == 'sequential':
-        #     pass
-
-        # elif group_assignment_type == 'alternate':
-        #     # Get the number of unique elements and the counts
-        #     unique_elements, counts = np.unique(groups, return_counts=True)
-
-        #     # Create a repeating array, where we repeat the minimum number of times
-        #     min_count = np.min(counts)
-        #     repeating_array = np.tile(unique_elements, min_count)
-
-        #     # Append the remaining counts of the other groups
-        #     remaining_elements = []
-        #     for i in range(len(unique_elements)):
-        #         num_to_append = counts[i] - min_count
-        #         remaining_elements.append([i] * num_to_append)
-        #     remaining_elements = np.array(list(flatten(remaining_elements)))
-
-        #     groups = np.concatenate((repeating_array, remaining_elements)).astype(int)
-
-        # elif group_assignment_type == 'random':
-        #     np.random.shuffle(groups)
-        
-        # else:
-        #     raise ValueError("""Please supply group_assignment_type from the
-        #                     list ['sequential', 'alternate', 'random']""")
-        
+            
         ## Create assignments for change points
         if self.mem_change:
             if isinstance(group_sizes, list):

@@ -159,11 +159,50 @@ class VariationalBayes:
                     )
 
     def _update_q_a(self):
+
+        def log_joint(x, a, z, rho, lambda_, pi):
+
+            term1 = 0
+            for i in range(self.num_nodes):
+                for j in range(self.num_nodes):
+                    for k in range(self.num_groups):
+                        for m in range(self.num_groups):
+                            term1 += (a[i,j] * z[i,k] * z[j,m] * (
+                                x[i,j] * np.log(lambda_[k,m]) - 
+                                self.int_length * lambda_[k,m]
+                                ) +
+                                z[i,k] * z[j,m] * (a[i,j] * np.log(rho[k,m]) +
+                                        (1 - a[i,j]) * np.log(1 - rho[k,m]))
+                            )
+            
+            term2 = 0
+            for k in range(self.num_groups):
+                for i in range(self.num_nodes):
+                    term2 += z[i,k] * np.log(pi[k])
+                term2 += (self.gamma[k] - 1) * np.log(pi[k]) + gammaln(self.gamma[k])
+            term2 += gammaln(np.sum(self.gamma))
+
+            term3 = 0
+            for k in range(self.num_groups):
+                for m in range(self.num_groups):
+                    term3 += (
+                        gammaln(self.eta[k,m] + self.zeta[k,m]) - gammaln(self.eta[k,m]) -
+                        gammaln(self.zeta[k,m]) + (self.zeta[k,m] - 1) * np.log(rho[k,m]) +
+                        (self.zeta[k,m] - 1) * np.log(1 - rho[k,m]) + 
+                        self.alpha[k,m] * np.log(self.beta[k,m]) - gammaln(self.alpha[k,m]) + 
+                        (self.alpha[k,m] - 1) * np.log(lambda_[k,m]) - self.beta[k,m] * lambda_[k,m]
+                    )
+
+            return term1 + term2 + term3
+        
+        
+
+    def _update_q_a_old(self):
         """
         A method to compute the CAVI approximation for the posterior of $a$. This
         is only run if infer_graph_structure = True.
         """
-        def r_sum_term(i,j):
+        def edge_prob(i,j):
             r_sum = 0
             for k in range(self.num_groups):
                 for m in range(self.num_groups):
@@ -173,46 +212,29 @@ class VariationalBayes:
                                 digamma(self.alpha[k,m])
                                 -
                                 np.log(self.beta[k,m])
-                            )
-                            - self.int_length * 
-                            self.alpha[k,m] / self.beta[k,m] 
-                            +
-                            digamma(self.eta[k,m]) 
+                            ) + 
+                            (digamma(self.eta[k,m]) 
                             -
-                            digamma(self.eta[k,m] + self.zeta[k,m])
+                            digamma(self.eta[k,m] + self.zeta[k,m]))
+                            -
+                            (digamma(self.zeta[k,m])
+                            -
+                            digamma(self.zeta[k,m] + self.eta[k,m]))
+                            -
+                            (self.int_length * 
+                            self.alpha[k,m] / self.beta[k,m])
                         )
                     )
 
             return r_sum
-
-        def s_sum_term(i,j):
-            s_sum = 0
-            for k in range(self.num_groups):
-                for m in range(self.num_groups):
-                    s_sum += (
-                        self.tau[i,k] * self.tau[j,m] * (
-                            digamma(self.zeta[k,m])
-                            -
-                            digamma(self.zeta[k,m] + self.eta[k,m])
-                        )
-                    )
-            
-            return s_sum
 
         for i in range(self.num_nodes):
             for j in range(self.num_nodes):
                 if i == j:
                     pass
                 else:
-                    if ((self.eff_count[i,j] == 0) & (self.sigma[i,j] != 1)):
-                        log_r = r_sum_term(i,j)
-                        log_s = s_sum_term(i,j)
-
-                        self.sigma[i,j] = (
-                            np.exp(log_r - logsumexp([log_r, log_s]))
-                        )
-                    else:
-                        self.sigma[i,j] = 1
+                    r_sum = edge_prob(i,j)
+                    self.sigma[i,j] = 1 / (1 + np.exp(-r_sum))
 
     def _update_q_z(self):
         """
@@ -239,12 +261,12 @@ class VariationalBayes:
                 self.eff_count[j_prime,i] * self.sigma[j_prime,i] * (
                     digamma(self.alpha[:,k]) - np.log(self.beta[:,k])
                 ) -
-                
+                self.int_length * (
                 self.sigma[i,j_prime] * 
                 self.alpha[k,:] / self.beta[k,:] -
                 self.sigma[j_prime,i] * 
-                self.alpha[:,k] / self.beta[:,k] + 
-                
+                self.alpha[:,k] / self.beta[:,k]
+                ) + 
                 self.sigma[i,j_prime] * (
                     digamma(self.eta[k,:]) - 
                     digamma(self.eta[k,:] + self.zeta[k,:])
@@ -253,16 +275,13 @@ class VariationalBayes:
                     digamma(self.zeta[k,:]) - 
                     digamma(self.eta[k,:] + self.zeta[k,:])
                 ) + 
-
-                self.int_length * (
-                    self.sigma[j_prime,i] * (
-                        digamma(self.eta[:,k]) - 
-                        digamma(self.eta[:,k] + self.zeta[:,k])
-                    ) +
-                    (1 - self.sigma[j_prime,i]) * (
-                        digamma(self.zeta[:,k]) - 
-                        digamma(self.eta[:,k] + self.zeta[:,k])
-                    )
+                self.sigma[j_prime,i] * (
+                    digamma(self.eta[:,k]) - 
+                    digamma(self.eta[:,k] + self.zeta[:,k])
+                ) +
+                (1 - self.sigma[j_prime,i]) * (
+                    digamma(self.zeta[:,k]) - 
+                    digamma(self.eta[:,k] + self.zeta[:,k])
                 )
             )
 
@@ -560,7 +579,6 @@ class VariationalBayes:
         else:
             if self.infer_graph_bool:
                 # Set parameter value
-                self.sigma_prior = self.sigma_0
                 self.eta = self.eta_prior
                 self.zeta = self.zeta_prior
 
@@ -624,7 +642,6 @@ class VariationalBayes:
                 self.omega_prior = self.omega.copy()
             else:
                 if self.infer_graph_bool:
-                    self.sigma_prior = self.sigma.copy()
                     self.eta_prior = self.eta.copy()
                     self.zeta_prior = self.zeta.copy()
                 self.gamma_prior = self.gamma.copy()
@@ -694,3 +711,5 @@ class VariationalBayes:
                     self.eta_store[it_num + 1,:,:] = self.eta
                     self.zeta_store[it_num + 1,:,:] = self.zeta
                 self.gamma_store[it_num + 1,:] = self.gamma
+
+            print(self.sigma[:5, :5])
