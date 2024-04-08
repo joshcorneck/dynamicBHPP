@@ -1,7 +1,8 @@
 from typing import Dict
 import numpy as np
 from scipy.special import gammaln, digamma, logsumexp
-from scipy.stats import median_abs_deviation
+from scipy.stats import median_abs_deviation, dirichlet, gamma, bernoulli
+from scipy.stats import beta as beta_
 
 class VariationalBayes:
 
@@ -162,40 +163,111 @@ class VariationalBayes:
 
         def log_joint(x, a, z, rho, lambda_, pi):
 
-            term1 = 0
-            for i in range(self.num_nodes):
-                for j in range(self.num_nodes):
-                    for k in range(self.num_groups):
-                        for m in range(self.num_groups):
-                            term1 += (a[i,j] * z[i,k] * z[j,m] * (
-                                x[i,j] * np.log(lambda_[k,m]) - 
-                                self.int_length * lambda_[k,m]
-                                ) +
-                                z[i,k] * z[j,m] * (a[i,j] * np.log(rho[k,m]) +
-                                        (1 - a[i,j]) * np.log(1 - rho[k,m]))
-                            )
+            # for i in range(self.num_nodes):
+            #     for j in range(self.num_nodes):
+            #         for k in range(self.num_groups):
+            #             for m in range(self.num_groups):
+            #                 term1 += (a[i,j] * z[i,k] * z[j,m] * (
+            #                     x[i,j] * np.log(lambda_[k,m]) - 
+            #                     self.int_length * lambda_[k,m]
+            #                     ) +
+            #                     z[i,k] * z[j,m] * (a[i,j] * np.log(rho[k,m]) +
+            #                             (1 - a[i,j]) * np.log(1 - rho[k,m]))
+            #                 )
+
+            term1a = np.einsum('ij,ik,jm,ij,km', a, z, z, x, np.log(lambda_))
+            term1b = np.einsum('ij,ik,jm,km', a, z, z, -self.int_length * lambda_)
+            term1c = np.einsum('ik,jm,ij,km', z, z, a, np.log(rho))
+            term1d = np.einsum('ik,jm,ij,km', z, z,(1 - a), np.log(1 - rho))
+            term1 = term1a + term1b + term1c + term1d
+
+            # term2 = 0
+            # for k in range(self.num_groups):
+            #     term2 += (z[:,k] * np.log(pi[k])).sum()
+            #     term2 += (self.gamma[k] - 1) * np.log(pi[k]) + gammaln(self.gamma[k])
+            # term2 += gammaln(np.sum(self.gamma))
             
-            term2 = 0
-            for k in range(self.num_groups):
-                for i in range(self.num_nodes):
-                    term2 += z[i,k] * np.log(pi[k])
-                term2 += (self.gamma[k] - 1) * np.log(pi[k]) + gammaln(self.gamma[k])
+            term2 = np.matmul(z, np.log(pi)).sum()
+            term2 += ((self.gamma - 1) * np.log(pi) + gammaln(self.gamma)).sum()
             term2 += gammaln(np.sum(self.gamma))
 
-            term3 = 0
-            for k in range(self.num_groups):
-                for m in range(self.num_groups):
-                    term3 += (
-                        gammaln(self.eta[k,m] + self.zeta[k,m]) - gammaln(self.eta[k,m]) -
-                        gammaln(self.zeta[k,m]) + (self.zeta[k,m] - 1) * np.log(rho[k,m]) +
-                        (self.zeta[k,m] - 1) * np.log(1 - rho[k,m]) + 
-                        self.alpha[k,m] * np.log(self.beta[k,m]) - gammaln(self.alpha[k,m]) + 
-                        (self.alpha[k,m] - 1) * np.log(lambda_[k,m]) - self.beta[k,m] * lambda_[k,m]
-                    )
+            # term3 = 0
+            # for k in range(self.num_groups):
+            #     for m in range(self.num_groups):
+            #         term3 += (
+            #             gammaln(self.eta[k,m] + self.zeta[k,m]) - gammaln(self.eta[k,m]) -
+            #             gammaln(self.zeta[k,m]) + (self.zeta[k,m] - 1) * np.log(rho[k,m]) +
+            #             (self.zeta[k,m] - 1) * np.log(1 - rho[k,m]) + 
+            #             self.alpha[k,m] * np.log(self.beta[k,m]) - gammaln(self.alpha[k,m]) + 
+            #             (self.alpha[k,m] - 1) * np.log(lambda_[k,m]) - self.beta[k,m] * lambda_[k,m]
+                    # )
+            term3 = (
+                gammaln(self.eta + self.zeta) - gammaln(self.eta) -
+                gammaln(self.zeta) + (self.zeta - 1) * np.log(rho) +
+                (self.zeta - 1) * np.log(1 - rho) + 
+                self.alpha * np.log(self.beta) - gammaln(self.alpha) + 
+                (self.alpha - 1) * np.log(lambda_) - self.beta * lambda_
+            ).sum()
+        
 
             return term1 + term2 + term3
         
+        def q_z(z_val, tau):
+            return tau[z_val]
         
+        def q_a(x_bool, a_val, sigma):
+            if x_bool:
+                return 1
+            else:
+                pmf_val = bernoulli.pmf(a_val, sigma)
+                return pmf_val
+
+        def q_pi(pi_val, gamma_):
+            pdf_val = dirichlet.pdf(pi_val, gamma_)
+            return pdf_val
+
+        def q_lambda(lambda_val, alpha, beta):
+            pdf_val = gamma.pdf(lambda_val, a=alpha, scale=1/beta)
+            return pdf_val
+        
+        def q_rho(rho_val, nu, zeta):
+            pdf_val = beta_.pdf(rho_val, a=nu, b=zeta)
+            return pdf_val
+        
+        def compute_h(x_val, z_val, a_val, pi_val, lambda_val, rho_val,
+                      tau, sigma, gamma_, alpha, beta, nu, zeta):
+            
+            h = log_joint(x_val, a_val, z_val, rho_val, lambda_val, 
+                          pi_val)
+
+            h -= np.sum(np.log(np.array([
+                q_z(z_val, tau), q_a(a_val, sigma), q_pi(pi_val, gamma_),
+                q_lambda(lambda_val, alpha, beta),
+                q_rho(rho_val, nu, zeta)
+            ])))
+
+            return h
+        
+        def compute_grad_log_q(a_val, sigma):
+            if (a_val == 1) & (sigma == 1):
+                return 1
+            elif (sigma == 0) & (a_val == 0):
+                return 0
+            else:
+                grad_log_q = (a_val / sigma - 1) / (1 - sigma)
+                return grad_log_q
+        
+        def approx_grab_LB(x_bool, N_samp, sigma):
+
+            if x_bool:
+                a_samp = np.ones((N_samp, ))
+            else:
+                bernoulli_dist = bernoulli(sigma)
+                a_samp = bernoulli_dist.rvs(N_samp)
+            
+
+                
+
 
     def _update_q_a_old(self):
         """
@@ -245,138 +317,53 @@ class VariationalBayes:
         ## Functions to compute terms for fixed-point equations. This is 
         ## different for each condition.
         
-        # If we need to infer the graph structure
-        def sum_term_infer_graph(i, j_prime, k):
-            """
-            Function to compute sum over groups within exponential (when we DO need
-            to infer the graph structure).
-            Parameters:
-                - i, k: node and groups indices of responsibility to calculate.
-                - j_prime: index of node to check that i is connected to.
-            """
-            term = self.tau_prior[j_prime,:] * (
-                self.eff_count[i,j_prime] * self.sigma[i,j_prime] * (
-                    digamma(self.alpha[k,:]) - np.log(self.beta[k,:])
-                ) +
-                self.eff_count[j_prime,i] * self.sigma[j_prime,i] * (
-                    digamma(self.alpha[:,k]) - np.log(self.beta[:,k])
-                ) -
-                self.int_length * (
-                self.sigma[i,j_prime] * 
-                self.alpha[k,:] / self.beta[k,:] -
-                self.sigma[j_prime,i] * 
-                self.alpha[:,k] / self.beta[:,k]
-                ) + 
-                self.sigma[i,j_prime] * (
-                    digamma(self.eta[k,:]) - 
-                    digamma(self.eta[k,:] + self.zeta[k,:])
-                ) +
-                (1 - self.sigma[i,j_prime]) * (
-                    digamma(self.zeta[k,:]) - 
-                    digamma(self.eta[k,:] + self.zeta[k,:])
-                ) + 
-                self.sigma[j_prime,i] * (
-                    digamma(self.eta[:,k]) - 
-                    digamma(self.eta[:,k] + self.zeta[:,k])
-                ) +
-                (1 - self.sigma[j_prime,i]) * (
-                    digamma(self.zeta[:,k]) - 
-                    digamma(self.eta[:,k] + self.zeta[:,k])
-                )
-            )
-
-            return term.sum()
-
-        # If we don't need to infer the graph structure
-        def sum_term_known_graph(i, j_prime, k):
-            """
-            Function to compute sum over groups within exponential (when we DON'T need
-            to infer the graph structure) and are NOT inferring groups.
-            Parameters:
-                - i, k: node and groups indices of responsibility to calculate.
-                - j_prime: index of node to check that i is connected to.
-            """
-
-            term = 0
-
-            ## Two if statements: one for (i,j_prime) \in E and one for (j_prime,i) \in E.
-            if self.adj_mat[i,j_prime] == 1:
-                # This computes the interior sum of the exponential over m \in Q for 
-                # edge (i,j_prime) if this is in the edge set. 
-                term_out = self.tau_prior[j_prime,:] * (
-                    self.eff_count[i,j_prime] * (
-                        digamma(self.alpha[k,:]) - np.log(self.beta[k,:])
-                    ) -
-                    self.int_length * 
-                    (self.alpha[k,:] / self.beta[k,:])
-                )
-
-                term += term_out.sum()
-
-            if self.adj_mat[j_prime,i] == 1:
-                # This computes the interior sum of the exponential over m \in Q for 
-                # edge (j_prime,i) if this is in the edge set.
-                term_in = self.tau_prior[j_prime,:] * (
-                    self.eff_count[j_prime,i] * (
-                        digamma(self.alpha[:,k]) - np.log(self.beta[:,k])
-                    ) -
-                    self.int_length * 
-                    (self.alpha[:,k] / self.beta[:,k])
-                )
-
-                term += term_in.sum()
-
-
-            return term
-        
-        # Function to compute tau when IN the burn-in period.
-        def compute_tau_infer_groups(sum_func, num_nodes, num_var_groups):
-            # Empty array to store updates.
-            tau_temp = np.zeros((num_nodes, num_var_groups))
-
-            # Iterate over each i \in V (each node in node set).
-            for i in range(num_nodes):
-                for k in range(num_var_groups):
-                    temp_sum = (
-                        digamma(self.omega[k]) -
-                        digamma(self.nu[k] + 
-                                self.omega[k]) + 
-                        np.sum(
-                            digamma(self.nu[:k]) -
-                            digamma(self.nu[:k] + 
-                                    self.omega[:k]))
-                    )
-                    for j_prime in range(self.num_nodes):
-                        temp_sum += sum_func(i, j_prime, k)
-                    tau_temp[i,k] = temp_sum
-            
-            return tau_temp
-
-        # Function to compute tau when NOT IN the burn-in period.
-        def compute_tau_known_groups(sum_func, num_nodes, num_groups, gamma):
-            tau_temp = np.zeros((num_nodes, num_groups))
-            # Compute tau_{ik} for each i \in V and k \in Q.
-            for i in range(num_nodes):
-                for k in range(num_groups):
-                    temp_sum = ((digamma(gamma[k]) - 
-                                 digamma(gamma.sum()))
-                    )
-                    for j_prime in range(self.num_nodes):
-                        temp_sum += sum_func(i, j_prime, k)
-                    tau_temp[i,k] = temp_sum
-            
-            return tau_temp
-        
         # Structured in this way to prevent multiple bool checks
         if self.infer_num_groups_bool:
-            tau_temp = compute_tau_infer_groups(sum_term_known_graph, self.num_nodes,
-                                           self.num_var_groups)
+            term1 = digamma(self.omega[0]) - digamma(self.nu[0] + self.omega[0])
+            term1 = np.append(term1, 
+                             (digamma(self.omega[1:]) - digamma(self.nu[1:] + self.omega[1:]) + 
+                            np.cumsum(digamma(self.nu[:-1]) - digamma(self.nu[:-1] + self.omega[:-1]))))
+            term2 = np.einsum('ij,jm,ij,km -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
+                              digamma(self.alpha) - np.log(self.beta))
+            term3 = np.einsum('ij,jm,km -> ik', self.adj_mat, self.tau_prior, 
+                              -self.int_length * self.alpha/self.beta)
+            term4 = np.einsum('ji,jm,ji,mk -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
+                              digamma(self.alpha) - np.log(self.beta))
+            term5 = np.einsum('ji,jm,mk -> ik', self.adj_mat, self.tau_prior, 
+                              -self.int_length * self.alpha/self.beta)
+            tau_temp = term1 + term2 + term3 + term4 + term5
         elif self.infer_graph_bool:
-            tau_temp = compute_tau_known_groups(sum_term_infer_graph, self.num_nodes,
-                                   self.num_groups, self.gamma)
+            term1 = digamma(gamma) - digamma(gamma.sum())
+            term2a = np.einsum('jm,ij,km -> ik', self.tau_prior, -self.int_length * self.sigma, 
+                               self.alpha / self.beta)
+            term2b = np.einsum('jm,ji,mk -> ik', self.tau_prior, -self.int_length * self.sigma, 
+                               self.alpha / self.beta)
+            term3a = np.einsum('jm,ij,ij,km -> ik', self.tau_prior, self.eff_count, self.sigma, 
+                            digamma(self.alpha) - np.log(self.beta))
+            term3b = np.einsum('jm,ji,ji,mk -> ik', self.tau_prior, self.eff_count, self.sigma, 
+                            digamma(self.alpha) - np.log(self.beta))
+            term4a = np.einsum('jm,ij,km -> ik', self.tau_prior, self.sigma, 
+                            digamma(self.eta) - digamma(self.eta + self.zeta))
+            term4b = np.einsum('jm,ji,mk -> ik', self.tau_prior, self.sigma, 
+                            digamma(self.eta) - digamma(self.eta + self.zeta))
+            term5a = np.einsum('jm,ij,km -> ik', self.tau_prior, 1 - self.sigma, 
+                            digamma(self.zeta) - digamma(self.eta + self.zeta))
+            term5b = np.einsum('jm,ji,mk -> ik', self.tau_prior, 1 - self.sigma, 
+                            digamma(self.zeta) - digamma(self.eta + self.zeta))
+            tau_temp = (term1 + term2a + term2b + term3a + term3b + term4a + term4b + 
+                        term5a + term5b)
         else:
-            tau_temp = compute_tau_known_groups(sum_term_known_graph, self.num_nodes,
-                                   self.num_groups, self.gamma)
+            term1 = digamma(self.gamma) - digamma(self.gamma.sum())
+            term2 = np.einsum('ij,jm,ij,km -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
+                              digamma(self.alpha) - np.log(self.beta))
+            term3 = np.einsum('ij,jm,km -> ik', self.adj_mat, self.tau_prior, 
+                              -self.int_length * self.alpha/self.beta)
+            term4 = np.einsum('ji,jm,ji,mk -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
+                              digamma(self.alpha) - np.log(self.beta))
+            term5 = np.einsum('ji,jm,mk -> ik', self.adj_mat, self.tau_prior, 
+                              -self.int_length * self.alpha/self.beta)
+            tau_temp = term1 + term2 + term3 + term4 + term5
+
 
         # Convert to exponential and normalise using logsumexp
         self.tau = np.exp(tau_temp - logsumexp(tau_temp, axis=1)[:,None])
@@ -711,5 +698,3 @@ class VariationalBayes:
                     self.eta_store[it_num + 1,:,:] = self.eta
                     self.zeta_store[it_num + 1,:,:] = self.zeta
                 self.gamma_store[it_num + 1,:] = self.gamma
-
-            print(self.sigma[:5, :5])
