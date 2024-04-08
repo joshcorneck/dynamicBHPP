@@ -163,44 +163,16 @@ class VariationalBayes:
 
         def log_joint(x, a, z, rho, lambda_, pi):
 
-            # for i in range(self.num_nodes):
-            #     for j in range(self.num_nodes):
-            #         for k in range(self.num_groups):
-            #             for m in range(self.num_groups):
-            #                 term1 += (a[i,j] * z[i,k] * z[j,m] * (
-            #                     x[i,j] * np.log(lambda_[k,m]) - 
-            #                     self.int_length * lambda_[k,m]
-            #                     ) +
-            #                     z[i,k] * z[j,m] * (a[i,j] * np.log(rho[k,m]) +
-            #                             (1 - a[i,j]) * np.log(1 - rho[k,m]))
-            #                 )
-
             term1a = np.einsum('ij,ik,jm,ij,km', a, z, z, x, np.log(lambda_))
             term1b = np.einsum('ij,ik,jm,km', a, z, z, -self.int_length * lambda_)
             term1c = np.einsum('ik,jm,ij,km', z, z, a, np.log(rho))
             term1d = np.einsum('ik,jm,ij,km', z, z,(1 - a), np.log(1 - rho))
             term1 = term1a + term1b + term1c + term1d
-
-            # term2 = 0
-            # for k in range(self.num_groups):
-            #     term2 += (z[:,k] * np.log(pi[k])).sum()
-            #     term2 += (self.gamma[k] - 1) * np.log(pi[k]) + gammaln(self.gamma[k])
-            # term2 += gammaln(np.sum(self.gamma))
             
             term2 = np.matmul(z, np.log(pi)).sum()
             term2 += ((self.gamma - 1) * np.log(pi) + gammaln(self.gamma)).sum()
             term2 += gammaln(np.sum(self.gamma))
 
-            # term3 = 0
-            # for k in range(self.num_groups):
-            #     for m in range(self.num_groups):
-            #         term3 += (
-            #             gammaln(self.eta[k,m] + self.zeta[k,m]) - gammaln(self.eta[k,m]) -
-            #             gammaln(self.zeta[k,m]) + (self.zeta[k,m] - 1) * np.log(rho[k,m]) +
-            #             (self.zeta[k,m] - 1) * np.log(1 - rho[k,m]) + 
-            #             self.alpha[k,m] * np.log(self.beta[k,m]) - gammaln(self.alpha[k,m]) + 
-            #             (self.alpha[k,m] - 1) * np.log(lambda_[k,m]) - self.beta[k,m] * lambda_[k,m]
-                    # )
             term3 = (
                 gammaln(self.eta + self.zeta) - gammaln(self.eta) -
                 gammaln(self.zeta) + (self.zeta - 1) * np.log(rho) +
@@ -266,47 +238,21 @@ class VariationalBayes:
                 a_samp = bernoulli_dist.rvs(N_samp)
             
 
-                
-
-
     def _update_q_a_old(self):
         """
         A method to compute the CAVI approximation for the posterior of $a$. This
         is only run if infer_graph_structure = True.
         """
-        def edge_prob(i,j):
-            r_sum = 0
-            for k in range(self.num_groups):
-                for m in range(self.num_groups):
-                    r_sum += (
-                        self.tau[i,k] * self.tau[j,m] * (
-                            self.eff_count[i,j] * (
-                                digamma(self.alpha[k,m])
-                                -
-                                np.log(self.beta[k,m])
-                            ) + 
-                            (digamma(self.eta[k,m]) 
-                            -
-                            digamma(self.eta[k,m] + self.zeta[k,m]))
-                            -
-                            (digamma(self.zeta[k,m])
-                            -
-                            digamma(self.zeta[k,m] + self.eta[k,m]))
-                            -
-                            (self.int_length * 
-                            self.alpha[k,m] / self.beta[k,m])
-                        )
-                    )
 
-            return r_sum
-
-        for i in range(self.num_nodes):
-            for j in range(self.num_nodes):
-                if i == j:
-                    pass
-                else:
-                    r_sum = edge_prob(i,j)
-                    self.sigma[i,j] = 1 / (1 + np.exp(-r_sum))
+        term1 = np.einsum('ik,jm,ij,km->ij', self.tau, self.tau, self.eff_count, 
+                        digamma(self.alpha) - np.log(self.beta))
+        term2 = np.einsum('ik,jm,km->ij', self.tau, self.tau, 
+                        (digamma(self.eta) - digamma(self.eta + self.zeta)) - 
+                        (digamma(self.zeta) - digamma(self.zeta + self.eta)) - 
+                        (self.int_length * self.alpha / self.beta))
+        term = term1 + term2
+        self.sigma = 1 / (1 + np.exp(-term))
+        np.fill_diagonal(self.sigma, 0)
 
     def _update_q_z(self):
         """
@@ -333,7 +279,7 @@ class VariationalBayes:
                               -self.int_length * self.alpha/self.beta)
             tau_temp = term1 + term2 + term3 + term4 + term5
         elif self.infer_graph_bool:
-            term1 = digamma(gamma) - digamma(gamma.sum())
+            term1 = digamma(self.gamma) - digamma(self.gamma.sum())
             term2a = np.einsum('jm,ij,km -> ik', self.tau_prior, -self.int_length * self.sigma, 
                                self.alpha / self.beta)
             term2b = np.einsum('jm,ji,mk -> ik', self.tau_prior, -self.int_length * self.sigma, 
