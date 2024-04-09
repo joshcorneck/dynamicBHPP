@@ -1,8 +1,11 @@
 from typing import Dict
 import numpy as np
 from scipy.special import gammaln, digamma, logsumexp
-from scipy.stats import median_abs_deviation, dirichlet, gamma, bernoulli
+from scipy.stats import median_abs_deviation, dirichlet, bernoulli
 from scipy.stats import beta as beta_
+from scipy.stats import gamma as gamma_
+
+import time
 
 class VariationalBayes:
 
@@ -90,6 +93,7 @@ class VariationalBayes:
         self.int_length = int_length
         # Arrays to store the effective counts and observation time.
         self.eff_count = np.zeros((self.num_nodes, self.num_nodes))
+        self.full_count = np.zeros((self.num_nodes, self.num_nodes))
         self.eff_obs_time = np.zeros((self.num_nodes, self.num_nodes))
         self.eff_obs_time.fill(self.int_length)
         self.int_length_temp = self.int_length
@@ -158,20 +162,29 @@ class VariationalBayes:
                             ]
                         )
                     )
+        self.full_count = self.full_count + self.eff_count
 
-    def _update_q_a(self):
+    def _update_q_a(self, beta1, beta2, alpha0, N_runs_ADAM, N_samples):
+        """
+        Function to compute gradient ascent updates for q_a based on ADAM procedure.
+        Parameters:
+            - beta1, beta2, alpha0: parameters for ADAM.
+            - N_runs_ADAM: number of iterations on each ADAM run.
+            - N_samples: number of samples of a to draw on each gradient estimation.
+        """
 
-        def log_joint(x, a, z, rho, lambda_, pi):
-
+        def _log_joint(a, x, z, rho, lambda_, pi):
+            
             term1a = np.einsum('ij,ik,jm,ij,km', a, z, z, x, np.log(lambda_))
             term1b = np.einsum('ij,ik,jm,km', a, z, z, -self.int_length * lambda_)
             term1c = np.einsum('ik,jm,ij,km', z, z, a, np.log(rho))
             term1d = np.einsum('ik,jm,ij,km', z, z,(1 - a), np.log(1 - rho))
             term1 = term1a + term1b + term1c + term1d
             
-            term2 = np.matmul(z, np.log(pi)).sum()
-            term2 += ((self.gamma - 1) * np.log(pi) + gammaln(self.gamma)).sum()
-            term2 += gammaln(np.sum(self.gamma))
+            term2a = np.matmul(z, np.log(pi)).sum()
+            term2b = ((self.gamma - 1) * np.log(pi) + gammaln(self.gamma)).sum()
+            term2c = gammaln(np.sum(self.gamma))
+            term2 = term2a + term2b + term2c
 
             term3 = (
                 gammaln(self.eta + self.zeta) - gammaln(self.eta) -
@@ -184,60 +197,121 @@ class VariationalBayes:
 
             return term1 + term2 + term3
         
-        def q_z(z_val, tau):
-            return tau[z_val]
+        def _q_z(z_val, tau) -> np.array:
+            return tau[z_val == 1]
         
-        def q_a(x_bool, a_val, sigma):
-            if x_bool:
-                return 1
-            else:
-                pmf_val = bernoulli.pmf(a_val, sigma)
-                return pmf_val
+        def _q_a(a_val, sigma) -> np.array:
+            pmf_val = bernoulli.pmf(a_val, sigma)
+            return pmf_val
 
-        def q_pi(pi_val, gamma_):
-            pdf_val = dirichlet.pdf(pi_val, gamma_)
+        def _q_pi(pi_val, gamma) -> np.array:
+            pdf_val = dirichlet.pdf(pi_val, gamma)
             return pdf_val
 
-        def q_lambda(lambda_val, alpha, beta):
-            pdf_val = gamma.pdf(lambda_val, a=alpha, scale=1/beta)
+        def _q_lambda(lambda_val, alpha, beta) -> np.array:
+            pdf_val = gamma_.pdf(lambda_val, a=alpha, scale=1/beta)
             return pdf_val
         
-        def q_rho(rho_val, nu, zeta):
-            pdf_val = beta_.pdf(rho_val, a=nu, b=zeta)
+        def _q_rho(rho_val, eta, zeta) -> np.array:
+            pdf_val = beta_.pdf(rho_val, a=eta, b=zeta)
             return pdf_val
         
-        def compute_h(x_val, z_val, a_val, pi_val, lambda_val, rho_val,
-                      tau, sigma, gamma_, alpha, beta, nu, zeta):
+        def _approx_grad_LB(x_val, z_val, a_samples, pi_val, lambda_val, rho_val):
+
+            grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
+            for it, a_val in enumerate(a_samples): 
+                # Compute h by flattening the output of each q_ function and 
+                # summing their logarithms
+                h = _log_joint(a_val, x_val, z_val, rho_val, lambda_val, pi_val)
+                q_flat = np.concatenate([
+                    _q_z(z_val, self.tau).flatten(), 
+                    _q_a(a_val, self.sigma).flatten(), 
+                    _q_pi(pi_val, self.gamma).flatten(),
+                    _q_lambda(lambda_val, self.alpha, self.beta).flatten(),
+                    _q_rho(rho_val, self.eta, self.zeta).flatten()
+                ])
+                print(f"q_flat:{q_flat}")
+                h -= np.sum(np.log(q_flat))
+
+                # Compute gradient of log(q) for nodes that haven't yet seen an 
+                # observation. This will be of shape (num_nodes, num_nodes).
+                grad_log_q = np.zeros((self.num_nodes, self.num_nodes))
+                grad_log_q[~self.x_bool] = (
+                    (a_val[~self.x_bool] / self.sigma[~self.x_bool] - 1) / 
+                    (1 - self.sigma[~self.x_bool])
+                )
+
+                grad_LB[it, ~self.x_bool] = (
+                    grad_log_q[~self.x_bool] * h
+                )
             
-            h = log_joint(x_val, a_val, z_val, rho_val, lambda_val, 
-                          pi_val)
+            grad_LB = grad_LB.mean(axis=0)
 
-            h -= np.sum(np.log(np.array([
-                q_z(z_val, tau), q_a(a_val, sigma), q_pi(pi_val, gamma_),
-                q_lambda(lambda_val, alpha, beta),
-                q_rho(rho_val, nu, zeta)
-            ])))
-
-            return h
+            return grad_LB
         
-        def compute_grad_log_q(a_val, sigma):
-            if (a_val == 1) & (sigma == 1):
-                return 1
-            elif (sigma == 0) & (a_val == 0):
-                return 0
-            else:
-                grad_log_q = (a_val / sigma - 1) / (1 - sigma)
-                return grad_log_q
-        
-        def approx_grab_LB(x_bool, N_samp, sigma):
+        def _ADAM(beta1, beta2, alpha0, sigma0, g0, N_runs_ADAM,  
+                  N_samples, x_val, z_val, pi_val, lambda_val, rho_val):
+            
+            g_t = g0; g_bar = g0; v_bar = g0 ** 2; sigma_t = sigma0
+            for t in range(N_runs_ADAM):
+                print(f"ADAM Iteration: {t}")
+                # Update estimate
+                g_bar[~self.x_bool] = beta1 * g_bar[~self.x_bool] + (1 - beta1) * g_t[~self.x_bool]
+                v_bar[~self.x_bool] = beta2 * v_bar[~self.x_bool] + (1 - beta2) * (g_t[~self.x_bool] ** 2)
+                sigma_t[~self.x_bool] = sigma_t[~self.x_bool] + alpha0 * g_bar[~self.x_bool] / np.sqrt(v_bar[~self.x_bool])
+                
+                # Update the gradient
+                # Generate N_samples from a
+                a_samples = np.ones((N_samples, self.num_nodes, self.num_nodes))
+                for run in range(N_samples):
+                    u = np.random.uniform(0, 1, (self.num_nodes, self.num_nodes))
+                    u_bool = u > self.sigma
+                    a_samples[run, u_bool] = 0
+                    a_samples[run, self.x_bool] = 1
+                g_t = _approx_grad_LB(x_val, z_val, a_samples, pi_val, 
+                                     lambda_val, rho_val)
 
-            if x_bool:
-                a_samp = np.ones((N_samp, ))
-            else:
-                bernoulli_dist = bernoulli(sigma)
-                a_samp = bernoulli_dist.rvs(N_samp)
+            return sigma_t 
+        
+        def run_sigma_update(x_val, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples):
+            """
+            Run the full ADAM optimisation to infer parameter values.
+            Parameters:
+                - x_val: n_nodes x n_nodes array of edge counts up to current time.
+                - beta1, beta2, alpha0, g0:  ADAM parameters.
+                - N_runs_ADAM, N_samp: number of ADAM iterations and number of
+                                        sigma samples to draw to estimate gradient.
+            """
+            ###
+            # STEP 1
+            ###
+
+            # Sample values for a_val, z_val, pi_val, rho_val and lambda_val
+            # (computed using the mean of current approximate posteriors)
+            # z, pi, rho, lambda
+            tau_max_idx = self.tau.argmax(axis=1)
+            z_val = np.zeros((self.num_nodes, self.num_groups))
+            z_val[np.arange(self.num_nodes), tau_max_idx] = 1
+            pi_val = self.gamma / self.gamma.sum()
+            rho_val = self.eta / (self.eta + self.zeta)
+            lambda_val = self.alpha / self.beta
+
+            ###
+            # STEP 2
+            ###
+            self.sigma[self.x_bool] = 1
+            sigma_temp = _ADAM(beta1, beta2, alpha0, self.sigma, g0, N_runs_ADAM,  
+                               N_samples, x_val, z_val, pi_val, lambda_val, rho_val)
+            self.sigma[~self.x_bool] = sigma_temp[~self.x_bool]
+            np.fill_diagonal(self.sigma, 0)
             
 
+        # UPDATE SIGMA ESTIMATE
+        # Boolean for whether there is a.s. an edge
+        self.x_bool = self.full_count > 0
+        g0 = np.ones((self.num_nodes, self.num_nodes))
+        run_sigma_update(self.full_count, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples)
+            
     def _update_q_a_old(self):
         """
         A method to compute the CAVI approximation for the posterior of $a$. This
@@ -413,7 +487,9 @@ class VariationalBayes:
                            delta_rho:float=1, n_cavi: int=2, 
                            cp_burn_steps: int=10, cp_stationary_steps: int=10,
                            cp_kl_lag_steps: int=2, cp_kl_thresh: float=10, 
-                           cp_rate_wait: float=0.5, ARLO_bool: bool=False):
+                           cp_rate_wait: float=0.5, ARLO_bool: bool=False, 
+                           beta1: float=0.9, beta2: float=0.99, alpha0: float=0.01, 
+                           N_runs_ADAM: int=5, N_samples: int=100):
         """
         A method to run the variational Bayesian update in its entirety.
         Parameters:
@@ -427,10 +503,6 @@ class VariationalBayes:
             - cp_rate_wait: the assumed time of stationarity between changes
                             to the rate of the process.
         """
-        ## Transform steps to time
-        cp_burn_time = cp_burn_steps * self.int_length
-        cp_kl_lag_time = cp_kl_lag_steps * self.int_length
-
         ## Decay rates for the prior
         self.delta_pi = delta_pi
         self.delta_rho = delta_rho
@@ -544,13 +616,17 @@ class VariationalBayes:
             ## Update estimates (run CAVI n_cavi times)
             if self.infer_graph_bool:
                 cavi_count = 0
-                while cavi_count < n_cavi:
-                    self._update_q_a()
-                    self._update_q_z()
-                    self._update_q_pi()
-                    self._update_q_lam()
-                    self._update_q_rho()
-                    cavi_count += 1
+                full_count = 0
+                while full_count < 3:
+                    while cavi_count < n_cavi:
+                        self._update_q_z()
+                        self._update_q_pi()
+                        self._update_q_lam()
+                        self._update_q_rho()
+                        cavi_count += 1
+                    self._update_q_a(beta1, beta2, alpha0, 
+                                     N_runs_ADAM, N_samples)
+                    full_count += 1
             elif self.infer_num_groups_bool:
                 cavi_count = 0
                 while cavi_count < n_cavi:
