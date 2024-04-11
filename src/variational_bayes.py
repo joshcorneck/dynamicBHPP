@@ -1,3 +1,4 @@
+#%%
 from typing import Dict
 import numpy as np
 from scipy.special import gammaln, digamma, logsumexp
@@ -147,6 +148,7 @@ class VariationalBayes:
         update_time. Parameters:
             - update_time: time at which we run the update.  
         """
+        self.update_time = update_time
         for i in range(self.num_nodes):
             for j in range(self.num_nodes):
                 if self.sampled_network[i][j] is not None:
@@ -174,9 +176,9 @@ class VariationalBayes:
         """
 
         def _log_joint(a, x, z, rho, lambda_, pi):
-            
+            # CHECK IF WE WANT DEPENDENCE ON FULL DATA OR JUST OBSERVATION WINDOW
             term1a = np.einsum('ij,ik,jm,ij,km', a, z, z, x, np.log(lambda_))
-            term1b = np.einsum('ij,ik,jm,km', a, z, z, -self.int_length * lambda_)
+            term1b = np.einsum('ij,ik,jm,km', a, z, z, -self.update_time * lambda_)
             term1c = np.einsum('ik,jm,ij,km', z, z, a, np.log(rho))
             term1d = np.einsum('ik,jm,ij,km', z, z,(1 - a), np.log(1 - rho))
             term1 = term1a + term1b + term1c + term1d
@@ -188,20 +190,25 @@ class VariationalBayes:
 
             term3 = (
                 gammaln(self.eta + self.zeta) - gammaln(self.eta) -
-                gammaln(self.zeta) + (self.zeta - 1) * np.log(rho) +
+                gammaln(self.zeta) + (self.eta - 1) * np.log(rho) +
                 (self.zeta - 1) * np.log(1 - rho) + 
                 self.alpha * np.log(self.beta) - gammaln(self.alpha) + 
                 (self.alpha - 1) * np.log(lambda_) - self.beta * lambda_
             ).sum()
         
-
             return term1 + term2 + term3
         
         def _q_z(z_val, tau) -> np.array:
+            # z_val.shape = (num_nodes, num_groups) - returns np.array of
+            # shape (num_nodes, ) of the maximum tau value
             return tau[z_val == 1]
         
         def _q_a(a_val, sigma) -> np.array:
-            pmf_val = bernoulli.pmf(a_val, sigma)
+            pmf_val = (
+                sigma ** a_val * (1 - sigma) ** (1 - a_val)
+            )
+            # If there is at least one observation, then the pmf is 1
+            pmf_val[self.x_bool] = 1
             return pmf_val
 
         def _q_pi(pi_val, gamma) -> np.array:
@@ -217,7 +224,8 @@ class VariationalBayes:
             return pdf_val
         
         def _approx_grad_LB(x_val, z_val, a_samples, pi_val, lambda_val, rho_val):
-
+            # Gradient here is taken with respect to reparameterised sigma via
+            # the sigmoid function
             grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
             for it, a_val in enumerate(a_samples): 
                 # Compute h by flattening the output of each q_ function and 
@@ -230,21 +238,19 @@ class VariationalBayes:
                     _q_lambda(lambda_val, self.alpha, self.beta).flatten(),
                     _q_rho(rho_val, self.eta, self.zeta).flatten()
                 ])
-                print(f"q_flat:{q_flat}")
                 h -= np.sum(np.log(q_flat))
 
                 # Compute gradient of log(q) for nodes that haven't yet seen an 
                 # observation. This will be of shape (num_nodes, num_nodes).
                 grad_log_q = np.zeros((self.num_nodes, self.num_nodes))
-                grad_log_q[~self.x_bool] = (
-                    (a_val[~self.x_bool] / self.sigma[~self.x_bool] - 1) / 
-                    (1 - self.sigma[~self.x_bool])
+                # Edges where there has been an observation have a gradient of 0
+                sigma_bool = self.sigma != 0
+
+                # This is now the gradient with respect to sigma_tilde
+                grad_log_q[sigma_bool] = (
+                    a_val[sigma_bool] - self.sigma[sigma_bool]
                 )
 
-                grad_LB[it, ~self.x_bool] = (
-                    grad_log_q[~self.x_bool] * h
-                )
-            
             grad_LB = grad_LB.mean(axis=0)
 
             return grad_LB
@@ -252,14 +258,17 @@ class VariationalBayes:
         def _ADAM(beta1, beta2, alpha0, sigma0, g0, N_runs_ADAM,  
                   N_samples, x_val, z_val, pi_val, lambda_val, rho_val):
             
-            g_t = g0; g_bar = g0; v_bar = g0 ** 2; sigma_t = sigma0
+            g_t = g0; g_bar = g0; v_bar = g0 ** 2
+            sigma_t_tilde = np.log(sigma0/(1-sigma0))
             for t in range(N_runs_ADAM):
                 print(f"ADAM Iteration: {t}")
-                # Update estimate
-                g_bar[~self.x_bool] = beta1 * g_bar[~self.x_bool] + (1 - beta1) * g_t[~self.x_bool]
-                v_bar[~self.x_bool] = beta2 * v_bar[~self.x_bool] + (1 - beta2) * (g_t[~self.x_bool] ** 2)
-                sigma_t[~self.x_bool] = sigma_t[~self.x_bool] + alpha0 * g_bar[~self.x_bool] / np.sqrt(v_bar[~self.x_bool])
-                
+                # Update estimate - gt is 0 for elements that have seen an observation
+                g_bar = beta1 * g_bar + (1 - beta1) * g_t
+                v_bar = beta2 * v_bar + (1 - beta2) * (g_t ** 2)
+                sigma_t_tilde = sigma_t_tilde + alpha0 * g_bar / np.sqrt(v_bar)
+                sigma_t = 1 / (1 + np.exp(-sigma_t_tilde))
+                self.sigma = sigma_t
+
                 # Update the gradient
                 # Generate N_samples from a
                 a_samples = np.ones((N_samples, self.num_nodes, self.num_nodes))
@@ -268,10 +277,10 @@ class VariationalBayes:
                     u_bool = u > self.sigma
                     a_samples[run, u_bool] = 0
                     a_samples[run, self.x_bool] = 1
+
+                # Gradient with respect to sigma_tilde
                 g_t = _approx_grad_LB(x_val, z_val, a_samples, pi_val, 
                                      lambda_val, rho_val)
-
-            return sigma_t 
         
         def run_sigma_update(x_val, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples):
             """
@@ -299,10 +308,9 @@ class VariationalBayes:
             ###
             # STEP 2
             ###
+            _ADAM(beta1, beta2, alpha0, self.sigma, g0, N_runs_ADAM,  
+                  N_samples, x_val, z_val, pi_val, lambda_val, rho_val)
             self.sigma[self.x_bool] = 1
-            sigma_temp = _ADAM(beta1, beta2, alpha0, self.sigma, g0, N_runs_ADAM,  
-                               N_samples, x_val, z_val, pi_val, lambda_val, rho_val)
-            self.sigma[~self.x_bool] = sigma_temp[~self.x_bool]
             np.fill_diagonal(self.sigma, 0)
             
 
@@ -720,3 +728,5 @@ class VariationalBayes:
                     self.eta_store[it_num + 1,:,:] = self.eta
                     self.zeta_store[it_num + 1,:,:] = self.zeta
                 self.gamma_store[it_num + 1,:] = self.gamma
+
+# %%
