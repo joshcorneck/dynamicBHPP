@@ -107,12 +107,11 @@ class VariationalBayes:
                 raise ValueError("Supply eta_0.")
             if zeta_0 is None:
                 raise ValueError("Supply zeta_0.")
-            self.sigma_0 = sigma_0
             self.eta_prior = np.tile([eta_0], 
                                     (num_groups, num_groups))
             self.zeta_prior = np.tile([zeta_0], 
                                     (num_groups, num_groups))
-            self.sigma = np.zeros((self.num_nodes, self.num_nodes))
+            self.sigma = np.ones((self.num_nodes, self.num_nodes)) * sigma_0
 
         if alpha_0 is None:
             raise ValueError("Supply alpha_0.")
@@ -177,10 +176,14 @@ class VariationalBayes:
 
         def _log_joint(a, x, z, rho, lambda_, pi):
             # CHECK IF WE WANT DEPENDENCE ON FULL DATA OR JUST OBSERVATION WINDOW
-            term1a = np.einsum('ij,ik,jm,ij,km', a, z, z, x, np.log(lambda_))
-            term1b = np.einsum('ij,ik,jm,km', a, z, z, -self.update_time * lambda_)
-            term1c = np.einsum('ik,jm,ij,km', z, z, a, np.log(rho))
-            term1d = np.einsum('ik,jm,ij,km', z, z,(1 - a), np.log(1 - rho))
+            term1a = np.einsum('lij,ik,jm,ij,km -> l', a, z, z, x, np.log(lambda_),
+                               optimize='optimal')
+            term1b = np.einsum('lij,ik,jm,km -> l', a, z, z, -self.update_time * lambda_,
+                               optimize='optimal')
+            term1c = np.einsum('ik,jm,lij,km -> l', z, z, a, np.log(rho),
+                               optimize='optimal')
+            term1d = np.einsum('ik,jm,lij,km -> l', z, z,(1 - a), np.log(1 - rho),
+                               optimize='optimal')
             term1 = term1a + term1b + term1c + term1d
             
             term2a = np.matmul(z, np.log(pi)).sum()
@@ -205,11 +208,13 @@ class VariationalBayes:
         
         def _q_a(a_val, sigma) -> np.array:
             pmf_val = (
-                sigma ** a_val * (1 - sigma) ** (1 - a_val)
+                sigma[np.newaxis, ...] ** a_val * 
+                (1 - sigma[np.newaxis, ...]) ** (1 - a_val)
             )
             # If there is at least one observation, then the pmf is 1
-            pmf_val[self.x_bool] = 1
+            pmf_val[:, self.x_bool] = 1
             return pmf_val
+
 
         def _q_pi(pi_val, gamma) -> np.array:
             pdf_val = dirichlet.pdf(pi_val, gamma)
@@ -227,60 +232,71 @@ class VariationalBayes:
             # Gradient here is taken with respect to reparameterised sigma via
             # the sigmoid function
             grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
-            for it, a_val in enumerate(a_samples): 
-                # Compute h by flattening the output of each q_ function and 
-                # summing their logarithms
-                h = _log_joint(a_val, x_val, z_val, rho_val, lambda_val, pi_val)
-                q_flat = np.concatenate([
-                    _q_z(z_val, self.tau).flatten(), 
-                    _q_a(a_val, self.sigma).flatten(), 
-                    _q_pi(pi_val, self.gamma).flatten(),
-                    _q_lambda(lambda_val, self.alpha, self.beta).flatten(),
-                    _q_rho(rho_val, self.eta, self.zeta).flatten()
-                ])
-                h -= np.sum(np.log(q_flat))
+            # Compute h by flattening the output of each q_ function and 
+            # summing their logarithms
+            h = _log_joint(a_samples, x_val, z_val, rho_val, lambda_val, pi_val)
+            q_flat = np.tile(
+                np.concatenate([
+                _q_z(z_val, self.tau).flatten(), 
+                _q_pi(pi_val, self.gamma).flatten(),
+                _q_lambda(lambda_val, self.alpha, self.beta).flatten(),
+                _q_rho(rho_val, self.eta, self.zeta).flatten()
+            ]), (a_samples.shape[0], 1)
+            )
+            q_flat = np.concatenate([q_flat, 
+                                     _q_a(a_samples, self.sigma).
+                                     reshape((a_samples.shape[0], -1))],
+                                    axis=1)
+            h -= np.sum(np.log(q_flat), axis=1)
 
-                # Compute gradient of log(q) for nodes that haven't yet seen an 
-                # observation. This will be of shape (num_nodes, num_nodes).
-                grad_log_q = np.zeros((self.num_nodes, self.num_nodes))
-                # Edges where there has been an observation have a gradient of 0
-                sigma_bool = self.sigma != 0
-
-                # This is now the gradient with respect to sigma_tilde
-                grad_log_q[sigma_bool] = (
-                    a_val[sigma_bool] - self.sigma[sigma_bool]
-                )
-
-            grad_LB = grad_LB.mean(axis=0)
-
-            return grad_LB
+            # This is now the gradient 
+            start = time.time()
+            grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
+            sigma_exp = self.sigma[np.newaxis, :, :]
+            grad_LB = (
+                ((a_samples - sigma_exp) * 
+                 np.broadcast_to(self.x_bool, 
+                                (a_samples.shape[0], self.num_nodes, self.num_nodes)))
+            )
+            grad_LB *= np.broadcast_to(h[:, np.newaxis, np.newaxis], 
+                                       (a_samples.shape[0], self.num_nodes, self.num_nodes))
+            return grad_LB.mean(axis=0)
         
         def _ADAM(beta1, beta2, alpha0, sigma0, g0, N_runs_ADAM,  
                   N_samples, x_val, z_val, pi_val, lambda_val, rho_val):
             
             g_t = g0; g_bar = g0; v_bar = g0 ** 2
-            sigma_t_tilde = np.log(sigma0/(1-sigma0))
+            sigma_t_tilde = np.zeros((self.num_nodes, self.num_nodes))
+            sigma_t = np.ones((self.num_nodes, self.num_nodes))
+            sigma_t_tilde[~self.x_bool] = np.log(sigma0[~self.x_bool]/(1-sigma0[~self.x_bool]))
             for t in range(N_runs_ADAM):
                 print(f"ADAM Iteration: {t}")
+                alpha0 = alpha0 ** (t + 1)
                 # Update estimate - gt is 0 for elements that have seen an observation
-                g_bar = beta1 * g_bar + (1 - beta1) * g_t
-                v_bar = beta2 * v_bar + (1 - beta2) * (g_t ** 2)
-                sigma_t_tilde = sigma_t_tilde + alpha0 * g_bar / np.sqrt(v_bar)
-                sigma_t = 1 / (1 + np.exp(-sigma_t_tilde))
+                not_x_bool = ~self.x_bool
+                g_bar[not_x_bool] = (
+                    beta1 * g_bar[not_x_bool] + (1 - beta1) * g_t[not_x_bool]
+                )
+                v_bar[not_x_bool] = (
+                    beta2 * v_bar[not_x_bool] + (1 - beta2) * (g_t[not_x_bool] ** 2)
+                )
+                sigma_t_tilde[not_x_bool] += (
+                    alpha0 * g_bar[not_x_bool] / np.sqrt(v_bar[not_x_bool])
+                )
+                sigma_t[not_x_bool] = 1 / (1 + np.exp(-sigma_t_tilde[not_x_bool]))
                 self.sigma = sigma_t
 
                 # Update the gradient
                 # Generate N_samples from a
                 a_samples = np.ones((N_samples, self.num_nodes, self.num_nodes))
-                for run in range(N_samples):
-                    u = np.random.uniform(0, 1, (self.num_nodes, self.num_nodes))
-                    u_bool = u > self.sigma
-                    a_samples[run, u_bool] = 0
-                    a_samples[run, self.x_bool] = 1
-
+                u = np.random.uniform(0, 1, (N_samples, self.num_nodes, self.num_nodes))
+                u_bool = u > self.sigma[np.newaxis, ...]
+                a_samples[u_bool] = 0
+                a_samples[:, self.x_bool] = 1
                 # Gradient with respect to sigma_tilde
                 g_t = _approx_grad_LB(x_val, z_val, a_samples, pi_val, 
-                                     lambda_val, rho_val)
+                                      lambda_val, rho_val)
+                
         
         def run_sigma_update(x_val, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples):
             """
@@ -413,9 +429,11 @@ class VariationalBayes:
         This is only run if infer_graph_structure = True.
         """
         self.eta = (self.delta_rho * (self.eta_prior - 1) + 
-                    self.tau.T @ self.sigma @ self.tau + 1) 
+                    np.einsum('ik,jm,ij', self.tau, self.tau, self.sigma) + 1
+                    )
         self.zeta = (self.delta_rho * (self.zeta_prior -1 ) + 
-                     self.tau.T @ (1 - self.sigma) @ self.tau + 1) 
+                     np.einsum('ik,jm,ij', self.tau, self.tau, 1 - self.sigma) + 1
+                     ) 
 
     def _update_q_lam(self):
         """
@@ -424,11 +442,14 @@ class VariationalBayes:
         """
         if not self.infer_graph_bool:
             self.sigma = self.adj_mat
-        had_prod_x_sig = self.eff_count * self.sigma
         self.alpha = (self.delta_lam * (self.alpha_prior - 1) + 
-                    self.tau.T @ had_prod_x_sig @ self.tau + 1)
+                    np.einsum('ik,jm,ij,ij', self.tau, self.tau,
+                            self.sigma, self.eff_count) + 1
+        )
         self.beta = (self.delta_lam * self.beta_prior + 
-                    self.int_length * self.tau.T @ self.sigma @ self.tau)
+                    self.int_length * np.einsum('ik,jm,ij', self.tau, self.tau,
+                                                self.sigma)
+        )
         
         # Adjust delta matrix for empty groups
         empty_groups_bool = self.tau.T @ self.sigma @ self.tau < 0.1
