@@ -165,7 +165,7 @@ class VariationalBayes:
                     )
         self.full_count = self.full_count + self.eff_count
 
-    def _update_q_a(self, beta1, beta2, alpha0, N_runs_ADAM, N_samples):
+    def _update_q_a(self, update_time):
         """
         Function to compute gradient ascent updates for q_a based on ADAM procedure.
         Parameters:
@@ -173,169 +173,201 @@ class VariationalBayes:
             - N_runs_ADAM: number of iterations on each ADAM run.
             - N_samples: number of samples of a to draw on each gradient estimation.
         """
+    # def _update_q_a(self, beta1, beta2, alpha0, N_runs_ADAM, N_samples):
+    #     """
+    #     Function to compute gradient ascent updates for q_a based on ADAM procedure.
+    #     Parameters:
+    #         - beta1, beta2, alpha0: parameters for ADAM.
+    #         - N_runs_ADAM: number of iterations on each ADAM run.
+    #         - N_samples: number of samples of a to draw on each gradient estimation.
+    #     """
 
-        def _log_joint(a, x, z, rho, lambda_, pi):
-            # CHECK IF WE WANT DEPENDENCE ON FULL DATA OR JUST OBSERVATION WINDOW
-            term1a = np.einsum('lij,ik,jm,ij,km -> l', a, z, z, x, np.log(lambda_),
-                               optimize='optimal')
-            term1b = np.einsum('lij,ik,jm,km -> l', a, z, z, -self.update_time * lambda_,
-                               optimize='optimal')
-            term1c = np.einsum('ik,jm,lij,km -> l', z, z, a, np.log(rho),
-                               optimize='optimal')
-            term1d = np.einsum('ik,jm,lij,km -> l', z, z,(1 - a), np.log(1 - rho),
-                               optimize='optimal')
-            term1 = term1a + term1b + term1c + term1d
+        # def _log_joint(a, x, z, rho, lambda_, pi):
+        #     # CHECK IF WE WANT DEPENDENCE ON FULL DATA OR JUST OBSERVATION WINDOW
+        #     term1a = np.einsum('lij,ik,jm,ij,km -> l', a, z, z, x, np.log(lambda_),
+        #                        optimize='optimal')
+        #     term1b = np.einsum('lij,ik,jm,km -> l', a, z, z, -self.update_time * lambda_,
+        #                        optimize='optimal')
+        #     term1c = np.einsum('ik,jm,lij,km -> l', z, z, a, np.log(rho),
+        #                        optimize='optimal')
+        #     term1d = np.einsum('ik,jm,lij,km -> l', z, z,(1 - a), np.log(1 - rho),
+        #                        optimize='optimal')
+        #     term1 = term1a + term1b + term1c + term1d
             
-            term2a = np.matmul(z, np.log(pi)).sum()
-            term2b = ((self.gamma - 1) * np.log(pi) + gammaln(self.gamma)).sum()
-            term2c = gammaln(np.sum(self.gamma))
-            term2 = term2a + term2b + term2c
+        #     term2a = np.matmul(z, np.log(pi)).sum()
+        #     term2b = ((self.gamma - 1) * np.log(pi) + gammaln(self.gamma)).sum()
+        #     term2c = gammaln(np.sum(self.gamma))
+        #     term2 = term2a + term2b + term2c
 
-            term3 = (
-                gammaln(self.eta + self.zeta) - gammaln(self.eta) -
-                gammaln(self.zeta) + (self.eta - 1) * np.log(rho) +
-                (self.zeta - 1) * np.log(1 - rho) + 
-                self.alpha * np.log(self.beta) - gammaln(self.alpha) + 
-                (self.alpha - 1) * np.log(lambda_) - self.beta * lambda_
-            ).sum()
+        #     term3 = (
+        #         gammaln(self.eta + self.zeta) - gammaln(self.eta) -
+        #         gammaln(self.zeta) + (self.eta - 1) * np.log(rho) +
+        #         (self.zeta - 1) * np.log(1 - rho) + 
+        #         self.alpha * np.log(self.beta) - gammaln(self.alpha) + 
+        #         (self.alpha - 1) * np.log(lambda_) - self.beta * lambda_
+        #     ).sum()
         
-            return term1 + term2 + term3
+        #     return term1 + term2 + term3
         
-        def _q_z(z_val, tau) -> np.array:
-            # z_val.shape = (num_nodes, num_groups) - returns np.array of
-            # shape (num_nodes, ) of the maximum tau value
-            return tau[z_val == 1]
+        # def _q_z(z_val, tau) -> np.array:
+        #     # z_val.shape = (num_nodes, num_groups) - returns np.array of
+        #     # shape (num_nodes, ) of the maximum tau value
+        #     return tau[z_val == 1]
         
-        def _q_a(a_val, sigma) -> np.array:
-            pmf_val = (
-                sigma[np.newaxis, ...] ** a_val * 
-                (1 - sigma[np.newaxis, ...]) ** (1 - a_val)
-            )
-            # If there is at least one observation, then the pmf is 1
-            pmf_val[:, self.x_bool] = 1
-            return pmf_val
+        # def _q_a(a_val, sigma) -> np.array:
+        #     pmf_val = (
+        #         sigma[np.newaxis, ...] ** a_val * 
+        #         (1 - sigma[np.newaxis, ...]) ** (1 - a_val)
+        #     )
+        #     # If there is at least one observation, then the pmf is 1
+        #     pmf_val[:, self.x_bool] = 1
+        #     return pmf_val
 
 
-        def _q_pi(pi_val, gamma) -> np.array:
-            pdf_val = dirichlet.pdf(pi_val, gamma)
-            return pdf_val
+        # def _q_pi(pi_val, gamma) -> np.array:
+        #     pdf_val = dirichlet.pdf(pi_val, gamma)
+        #     return pdf_val
 
-        def _q_lambda(lambda_val, alpha, beta) -> np.array:
-            pdf_val = gamma_.pdf(lambda_val, a=alpha, scale=1/beta)
-            return pdf_val
+        # def _q_lambda(lambda_val, alpha, beta) -> np.array:
+        #     pdf_val = gamma_.pdf(lambda_val, a=alpha, scale=1/beta)
+        #     return pdf_val
         
-        def _q_rho(rho_val, eta, zeta) -> np.array:
-            pdf_val = beta_.pdf(rho_val, a=eta, b=zeta)
-            return pdf_val
-        
-        def _approx_grad_LB(x_val, z_val, a_samples, pi_val, lambda_val, rho_val):
-            # Gradient here is taken with respect to reparameterised sigma via
-            # the sigmoid function
-            grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
-            # Compute h by flattening the output of each q_ function and 
-            # summing their logarithms
-            h = _log_joint(a_samples, x_val, z_val, rho_val, lambda_val, pi_val)
-            q_flat = np.tile(
-                np.concatenate([
-                _q_z(z_val, self.tau).flatten(), 
-                _q_pi(pi_val, self.gamma).flatten(),
-                _q_lambda(lambda_val, self.alpha, self.beta).flatten(),
-                _q_rho(rho_val, self.eta, self.zeta).flatten()
-            ]), (a_samples.shape[0], 1)
-            )
-            q_flat = np.concatenate([q_flat, 
-                                     _q_a(a_samples, self.sigma).
-                                     reshape((a_samples.shape[0], -1))],
-                                    axis=1)
-            h -= np.sum(np.log(q_flat), axis=1)
+        # def _q_rho(rho_val, eta, zeta) -> np.array:
+        #     pdf_val = beta_.pdf(rho_val, a=eta, b=zeta)
+        #     return pdf_val
 
-            # This is now the gradient 
-            start = time.time()
-            grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
-            sigma_exp = self.sigma[np.newaxis, :, :]
-            grad_LB = (
-                ((a_samples - sigma_exp) * 
-                 np.broadcast_to(self.x_bool, 
-                                (a_samples.shape[0], self.num_nodes, self.num_nodes)))
-            )
-            grad_LB *= np.broadcast_to(h[:, np.newaxis, np.newaxis], 
-                                       (a_samples.shape[0], self.num_nodes, self.num_nodes))
-            return grad_LB.mean(axis=0)
+        # def _approx_grad_LB(x_val, z_val, a_samples, pi_val, lambda_val, rho_val):
+        #     # Gradient here is taken with respect to reparameterised sigma via
+        #     # the sigmoid function
+        #     grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
+        #     # Compute h by flattening the output of each q_ function and 
+        #     # summing their logarithms
+        #     h = _log_joint(a_samples, x_val, z_val, rho_val, lambda_val, pi_val)
+        #     q_flat = np.tile(
+        #         np.concatenate([
+        #         _q_z(z_val, self.tau).flatten(), 
+        #         _q_pi(pi_val, self.gamma).flatten(),
+        #         _q_lambda(lambda_val, self.alpha, self.beta).flatten(),
+        #         _q_rho(rho_val, self.eta, self.zeta).flatten()
+        #     ]), (a_samples.shape[0], 1)
+        #     )
+        #     q_flat = np.concatenate([q_flat, 
+        #                              _q_a(a_samples, self.sigma).
+        #                              reshape((a_samples.shape[0], -1))],
+        #                             axis=1)
+        #     h -= np.sum(np.log(q_flat), axis=1)
+
+        #     # This is now the gradient 
+        #     start = time.time()
+        #     grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
+        #     sigma_exp = self.sigma[np.newaxis, :, :]
+        #     grad_LB = (
+        #         ((a_samples - sigma_exp) * 
+        #          np.broadcast_to(self.x_bool, 
+        #                         (a_samples.shape[0], self.num_nodes, self.num_nodes)))
+        #     )
+        #     grad_LB *= np.broadcast_to(h[:, np.newaxis, np.newaxis], 
+        #                                (a_samples.shape[0], self.num_nodes, self.num_nodes))
+        #     return grad_LB.mean(axis=0)
         
-        def _ADAM(beta1, beta2, alpha0, sigma0, g0, N_runs_ADAM,  
-                  N_samples, x_val, z_val, pi_val, lambda_val, rho_val):
+        # def _ADAM(beta1, beta2, alpha0, sigma0, g0, N_runs_ADAM,  
+        #           N_samples, x_val, z_val, pi_val, lambda_val, rho_val):
             
-            g_t = g0; g_bar = g0; v_bar = g0 ** 2
-            sigma_t_tilde = np.zeros((self.num_nodes, self.num_nodes))
-            sigma_t = np.ones((self.num_nodes, self.num_nodes))
-            sigma_t_tilde[~self.x_bool] = np.log(sigma0[~self.x_bool]/(1-sigma0[~self.x_bool]))
-            for t in range(N_runs_ADAM):
-                print(f"ADAM Iteration: {t}")
-                alpha0 = alpha0 ** (t + 1)
-                # Update estimate - gt is 0 for elements that have seen an observation
-                not_x_bool = ~self.x_bool
-                g_bar[not_x_bool] = (
-                    beta1 * g_bar[not_x_bool] + (1 - beta1) * g_t[not_x_bool]
-                )
-                v_bar[not_x_bool] = (
-                    beta2 * v_bar[not_x_bool] + (1 - beta2) * (g_t[not_x_bool] ** 2)
-                )
-                sigma_t_tilde[not_x_bool] += (
-                    alpha0 * g_bar[not_x_bool] / np.sqrt(v_bar[not_x_bool])
-                )
-                sigma_t[not_x_bool] = 1 / (1 + np.exp(-sigma_t_tilde[not_x_bool]))
-                self.sigma = sigma_t
+        #     g_t = g0; g_bar = g0; v_bar = g0 ** 2
+        #     sigma_t_tilde = np.zeros((self.num_nodes, self.num_nodes))
+        #     sigma_t = np.ones((self.num_nodes, self.num_nodes))
+        #     sigma_t_tilde[~self.x_bool] = np.log(sigma0[~self.x_bool]/(1-sigma0[~self.x_bool]))
+        #     for t in range(N_runs_ADAM):
+        #         print(f"ADAM Iteration: {t}")
+        #         alpha0 = alpha0 ** (t + 1)
+        #         # Update estimate - gt is 0 for elements that have seen an observation
+        #         not_x_bool = ~self.x_bool
+        #         g_bar[not_x_bool] = (
+        #             beta1 * g_bar[not_x_bool] + (1 - beta1) * g_t[not_x_bool]
+        #         )
+        #         v_bar[not_x_bool] = (
+        #             beta2 * v_bar[not_x_bool] + (1 - beta2) * (g_t[not_x_bool] ** 2)
+        #         )
+        #         sigma_t_tilde[not_x_bool] += (
+        #             alpha0 * g_bar[not_x_bool] / np.sqrt(v_bar[not_x_bool])
+        #         )
+        #         sigma_t[not_x_bool] = 1 / (1 + np.exp(-sigma_t_tilde[not_x_bool]))
+        #         self.sigma = sigma_t
 
-                # Update the gradient
-                # Generate N_samples from a
-                a_samples = np.ones((N_samples, self.num_nodes, self.num_nodes))
-                u = np.random.uniform(0, 1, (N_samples, self.num_nodes, self.num_nodes))
-                u_bool = u > self.sigma[np.newaxis, ...]
-                a_samples[u_bool] = 0
-                a_samples[:, self.x_bool] = 1
-                # Gradient with respect to sigma_tilde
-                g_t = _approx_grad_LB(x_val, z_val, a_samples, pi_val, 
-                                      lambda_val, rho_val)
+        #         # Update the gradient
+        #         # Generate N_samples from a
+        #         a_samples = np.ones((N_samples, self.num_nodes, self.num_nodes))
+        #         u = np.random.uniform(0, 1, (N_samples, self.num_nodes, self.num_nodes))
+        #         u_bool = u > self.sigma[np.newaxis, ...]
+        #         a_samples[u_bool] = 0
+        #         a_samples[:, self.x_bool] = 1
+        #         # Gradient with respect to sigma_tilde
+        #         g_t = _approx_grad_LB(x_val, z_val, a_samples, pi_val, 
+        #                               lambda_val, rho_val)
                 
         
-        def run_sigma_update(x_val, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples):
-            """
-            Run the full ADAM optimisation to infer parameter values.
-            Parameters:
-                - x_val: n_nodes x n_nodes array of edge counts up to current time.
-                - beta1, beta2, alpha0, g0:  ADAM parameters.
-                - N_runs_ADAM, N_samp: number of ADAM iterations and number of
-                                        sigma samples to draw to estimate gradient.
-            """
-            ###
-            # STEP 1
-            ###
+        # def run_sigma_update(x_val, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples):
+        #     """
+        #     Run the full ADAM optimisation to infer parameter values.
+        #     Parameters:
+        #         - x_val: n_nodes x n_nodes array of edge counts up to current time.
+        #         - beta1, beta2, alpha0, g0:  ADAM parameters.
+        #         - N_runs_ADAM, N_samp: number of ADAM iterations and number of
+        #                                 sigma samples to draw to estimate gradient.
+        #     """
+        #     ###
+        #     # STEP 1
+        #     ###
 
-            # Sample values for a_val, z_val, pi_val, rho_val and lambda_val
-            # (computed using the mean of current approximate posteriors)
-            # z, pi, rho, lambda
-            tau_max_idx = self.tau.argmax(axis=1)
-            z_val = np.zeros((self.num_nodes, self.num_groups))
-            z_val[np.arange(self.num_nodes), tau_max_idx] = 1
-            pi_val = self.gamma / self.gamma.sum()
-            rho_val = self.eta / (self.eta + self.zeta)
-            lambda_val = self.alpha / self.beta
+        #     # Sample values for a_val, z_val, pi_val, rho_val and lambda_val
+        #     # (computed using the mean of current approximate posteriors)
+        #     # z, pi, rho, lambda
+        #     tau_max_idx = self.tau.argmax(axis=1)
+        #     z_val = np.zeros((self.num_nodes, self.num_groups))
+        #     z_val[np.arange(self.num_nodes), tau_max_idx] = 1
+        #     pi_val = self.gamma / self.gamma.sum()
+        #     rho_val = self.eta / (self.eta + self.zeta)
+        #     lambda_val = self.alpha / self.beta
 
-            ###
-            # STEP 2
-            ###
-            _ADAM(beta1, beta2, alpha0, self.sigma, g0, N_runs_ADAM,  
-                  N_samples, x_val, z_val, pi_val, lambda_val, rho_val)
-            self.sigma[self.x_bool] = 1
-            np.fill_diagonal(self.sigma, 0)
+        #     ###
+        #     # STEP 2
+        #     ###
+        #     _ADAM(beta1, beta2, alpha0, self.sigma, g0, N_runs_ADAM,  
+        #           N_samples, x_val, z_val, pi_val, lambda_val, rho_val)
+        #     self.sigma[self.x_bool] = 1
+        #     np.fill_diagonal(self.sigma, 0)
             
+        # # UPDATE SIGMA ESTIMATE
+        # # Boolean for whether there is a.s. an edge
+        # self.x_bool = self.full_count > 0
+        # g0 = np.ones((self.num_nodes, self.num_nodes))
+        # run_sigma_update(self.full_count, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples)
 
-        # UPDATE SIGMA ESTIMATE
-        # Boolean for whether there is a.s. an edge
-        self.x_bool = self.full_count > 0
-        g0 = np.ones((self.num_nodes, self.num_nodes))
-        run_sigma_update(self.full_count, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples)
-            
+        # TESTING
+        tau_max_idx = self.tau.argmax(axis=1)
+        z_val = np.zeros((self.num_nodes, self.num_groups))
+        z_val[np.arange(self.num_nodes), tau_max_idx] = 1
+        rho_val = self.eta / (self.eta + self.zeta)
+        lambda_val = self.alpha / self.beta
+
+        # Create matrix of relevant lambda and rho values
+        lam_big = np.zeros((self.num_nodes, self.num_nodes))
+        rho_big = np.zeros((self.num_nodes, self.num_nodes))
+        rows, cols = np.meshgrid(np.arange(self.num_nodes), 
+                                 np.arange(self.num_nodes), 
+                                 indexing='ij')
+        lam_big = (lambda_val[tau_max_idx[rows.ravel()],
+                                  tau_max_idx[cols.ravel()]].
+                                  reshape(self.num_nodes, self.num_nodes))
+        rho_big = (rho_val[tau_max_idx[rows.ravel()],
+                                  tau_max_idx[cols.ravel()]].
+                                  reshape(self.num_nodes, self.num_nodes))  
+        self.sigma = (rho_big * np.exp(-update_time * lam_big) / 
+                      (1 - rho_big + rho_big * np.exp(-update_time * lam_big)))
+        # True if there is at least one observation
+        self.sigma[self.full_count > 0] = 1
+        np.fill_diagonal(self.sigma, 0)
+
     def _update_q_a_old(self):
         """
         A method to compute the CAVI approximation for the posterior of $a$. This
@@ -653,8 +685,9 @@ class VariationalBayes:
                         self._update_q_lam()
                         self._update_q_rho()
                         cavi_count += 1
-                    self._update_q_a(beta1, beta2, alpha0, 
-                                     N_runs_ADAM, N_samples)
+                    # self._update_q_a(beta1, beta2, alpha0, 
+                    #                  N_runs_ADAM, N_samples)
+                    self._update_q_a(update_time)
                     full_count += 1
             elif self.infer_num_groups_bool:
                 cavi_count = 0
