@@ -676,19 +676,28 @@ class VariationalBayes:
 
             ## Update estimates (run CAVI n_cavi times)
             if self.infer_graph_bool:
+                # full_count = 0
+                # while full_count < 3:
+                #     cavi_count = 0
+                #     while cavi_count < n_cavi:
+                #         self._update_q_z()
+                #         self._update_q_pi()
+                #         self._update_q_lam()
+                #         self._update_q_rho()
+                #         cavi_count += 1
+                #     # self._update_q_a(beta1, beta2, alpha0, 
+                #     #                  N_runs_ADAM, N_samples)
+                #     self._update_q_a(update_time)
+                #     full_count += 1
                 cavi_count = 0
-                full_count = 0
-                while full_count < 3:
-                    while cavi_count < n_cavi:
-                        self._update_q_z()
-                        self._update_q_pi()
-                        self._update_q_lam()
-                        self._update_q_rho()
-                        cavi_count += 1
-                    # self._update_q_a(beta1, beta2, alpha0, 
-                    #                  N_runs_ADAM, N_samples)
+                while cavi_count < n_cavi:
+                    self._update_q_z()
+                    self._update_q_pi()
+                    self._update_q_lam()
+                    self._update_q_rho()
                     self._update_q_a(update_time)
-                    full_count += 1
+                    cavi_count += 1
+
             elif self.infer_num_groups_bool:
                 cavi_count = 0
                 while cavi_count < n_cavi:

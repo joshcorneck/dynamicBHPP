@@ -40,9 +40,14 @@ n_cavi = int(data[5])
 int_length = float(data[6])
 delta = float(data[7])
 T_max = float(data[8])
-second_change_time = float(data[9])
+prop_new_group_1 = float(data[9])
 
-group_num_change_times = [2, second_change_time]
+group_num_change_times = [2, 3]
+
+group1 = int(prop_new_group_1 * num_nodes)
+group2 = num_nodes - group1
+group_sizes.append(np.array([group1, group2]))
+print(f"Group sizes: {group_sizes}")
 
 for glob_iteration in range(N_runs):
 
@@ -88,7 +93,8 @@ for glob_iteration in range(N_runs):
                           alpha_0=1, 
                           beta_0=1,
                           nu_0=1,
-                          infer_graph_bool=True,
+                          infer_num_groups_bool=True,
+                          num_var_groups=2,
                           adj_mat=adj_mat,
                           int_length=int_length,
                           T_max=T_max
@@ -113,11 +119,6 @@ for glob_iteration in range(N_runs):
     tau_store = VB.tau_store
     with open(f'param_output/tau/tau_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
         pickle.dump(tau_store, f)
-    f.close()
-
-    gamma_store = VB.gamma_store
-    with open(f'param_output/gamma/gamma_store_{pbs_index}_{glob_iteration}.pkl','wb') as f:
-        pickle.dump(gamma_store, f)
     f.close()
 
     alpha_store = VB.alpha_store
