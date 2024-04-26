@@ -107,12 +107,12 @@ class VariationalBayes:
                 raise ValueError("Supply eta_0.")
             if zeta_0 is None:
                 raise ValueError("Supply zeta_0.")
-            # self.eta_prior = np.tile([eta_0], 
-            #                         (num_groups, num_groups))
-            # self.zeta_prior = np.tile([zeta_0], 
-            #                         (num_groups, num_groups))
-            self.eta_prior = eta_0
-            self.zeta_prior = zeta_0
+            self.eta_prior = np.tile([eta_0], 
+                                    (num_groups, num_groups))
+            self.zeta_prior = np.tile([zeta_0], 
+                                    (num_groups, num_groups))
+            # self.eta_prior = eta_0
+            # self.zeta_prior = zeta_0
             self.sigma = np.ones((self.num_nodes, self.num_nodes)) * sigma_0
 
         if alpha_0 is None:
@@ -354,7 +354,7 @@ class VariationalBayes:
 
         # Create matrix of relevant lambda and rho values
         lam_big = np.zeros((self.num_nodes, self.num_nodes))
-        # rho_big = np.zeros((self.num_nodes, self.num_nodes))
+        rho_big = np.zeros((self.num_nodes, self.num_nodes))
         rows, cols = np.meshgrid(np.arange(self.num_nodes), 
                                  np.arange(self.num_nodes), 
                                  indexing='ij')
@@ -364,15 +364,15 @@ class VariationalBayes:
         
         # Store a running sum of the previous lambda values
         self.lam_big_store += lam_big
-        # rho_big = (rho_val[tau_max_idx[rows.ravel()],
-        #                           tau_max_idx[cols.ravel()]].
-        #                           reshape(self.num_nodes, self.num_nodes))  
-        # self.sigma = (rho_big * np.exp(-update_time * lam_big) / 
-        #               (1 - rho_big + rho_big * np.exp(-update_time * lam_big)))
+        rho_big = (rho_val[tau_max_idx[rows.ravel()],
+                                  tau_max_idx[cols.ravel()]].
+                                  reshape(self.num_nodes, self.num_nodes))  
+        self.sigma = (rho_big * np.exp(-self.int_length * self.lam_big_store) / 
+                      (1 - rho_big + rho_big * np.exp(-self.int_length * self.lam_big_store)))
         # self.sigma = (rho_val * np.exp(-update_time * lam_big) / 
         #               (1 - rho_val + rho_val * np.exp(-update_time * lam_big)))
-        self.sigma = (rho_val * np.exp(-self.int_length * self.lam_big_store) / 
-                      (1 - rho_val + rho_val * np.exp(-self.int_length * self.lam_big_store)))
+        # self.sigma = (rho_val * np.exp(-self.int_length * self.lam_big_store) / 
+                    #   (1 - rho_val + rho_val * np.exp(-self.int_length * self.lam_big_store)))
         # True if there is at least one observation
         self.sigma[self.full_count > 0] = 1
         np.fill_diagonal(self.sigma, 0)
@@ -402,25 +402,6 @@ class VariationalBayes:
                               -self.int_length * self.alpha/self.beta)
             tau_temp = term1 + term2 + term3 + term4 + term5
         elif self.infer_graph_bool:
-            # term1 = digamma(self.gamma) - digamma(self.gamma.sum())
-            # term2a = np.einsum('jm,ij,km -> ik', self.tau_prior, -self.int_length * self.sigma, 
-            #                    self.alpha / self.beta)
-            # term2b = np.einsum('jm,ji,mk -> ik', self.tau_prior, -self.int_length * self.sigma, 
-            #                    self.alpha / self.beta)
-            # term3a = np.einsum('jm,ij,ij,km -> ik', self.tau_prior, self.eff_count, self.sigma, 
-            #                 digamma(self.alpha) - np.log(self.beta))
-            # term3b = np.einsum('jm,ji,ji,mk -> ik', self.tau_prior, self.eff_count, self.sigma, 
-            #                 digamma(self.alpha) - np.log(self.beta))
-            # term4a = np.einsum('jm,ij,km -> ik', self.tau_prior, self.sigma, 
-            #                 digamma(self.eta) - digamma(self.eta + self.zeta))
-            # term4b = np.einsum('jm,ji,mk -> ik', self.tau_prior, self.sigma, 
-            #                 digamma(self.eta) - digamma(self.eta + self.zeta))
-            # term5a = np.einsum('jm,ij,km -> ik', self.tau_prior, 1 - self.sigma, 
-            #                 digamma(self.zeta) - digamma(self.eta + self.zeta))
-            # term5b = np.einsum('jm,ji,mk -> ik', self.tau_prior, 1 - self.sigma, 
-            #                 digamma(self.zeta) - digamma(self.eta + self.zeta))
-            # tau_temp = (term1 + term2a + term2b + term3a + term3b + term4a + term4b + 
-            #             term5a + term5b)
             term1 = self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum()))
             term2a = np.einsum('jm,ij,km -> ik', self.tau_prior, -self.int_length * self.sigma, 
                                self.alpha / self.beta)
@@ -430,7 +411,26 @@ class VariationalBayes:
                             digamma(self.alpha) - np.log(self.beta))
             term3b = np.einsum('jm,ji,ji,mk -> ik', self.tau_prior, self.eff_count, self.sigma, 
                             digamma(self.alpha) - np.log(self.beta))
-            tau_temp = (term1 + term2a + term2b + term3a + term3b)
+            term4a = np.einsum('jm,ij,km -> ik', self.tau_prior, self.sigma, 
+                            digamma(self.eta) - digamma(self.eta + self.zeta))
+            term4b = np.einsum('jm,ji,mk -> ik', self.tau_prior, self.sigma, 
+                            digamma(self.eta) - digamma(self.eta + self.zeta))
+            term5a = np.einsum('jm,ij,km -> ik', self.tau_prior, 1 - self.sigma, 
+                            digamma(self.zeta) - digamma(self.eta + self.zeta))
+            term5b = np.einsum('jm,ji,mk -> ik', self.tau_prior, 1 - self.sigma, 
+                            digamma(self.zeta) - digamma(self.eta + self.zeta))
+            tau_temp = (term1 + term2a + term2b + term3a + term3b + term4a + term4b + 
+                        term5a + term5b)
+            # term1 = self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum()))
+            # term2a = np.einsum('jm,ij,km -> ik', self.tau_prior, -self.int_length * self.sigma, 
+            #                    self.alpha / self.beta)
+            # term2b = np.einsum('jm,ji,mk -> ik', self.tau_prior, -self.int_length * self.sigma, 
+            #                    self.alpha / self.beta)
+            # term3a = np.einsum('jm,ij,ij,km -> ik', self.tau_prior, self.eff_count, self.sigma, 
+            #                 digamma(self.alpha) - np.log(self.beta))
+            # term3b = np.einsum('jm,ji,ji,mk -> ik', self.tau_prior, self.eff_count, self.sigma, 
+            #                 digamma(self.alpha) - np.log(self.beta))
+            # tau_temp = (term1 + term2a + term2b + term3a + term3b)
         else:
             term1 = self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum()))
             term2 = np.einsum('ij,jm,ij,km -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
@@ -463,14 +463,14 @@ class VariationalBayes:
         A method to compute the CAVI approximation to the posterior of rho.
         This is only run if infer_graph_structure = True.
         """
-        # self.eta = (self.delta_rho * (self.eta_prior - 1) + 
-        #             np.einsum('ik,jm,ij', self.tau, self.tau, self.sigma) + 1
-        #             )
-        # self.zeta = (self.delta_rho * (self.zeta_prior -1 ) + 
-        #              np.einsum('ik,jm,ij', self.tau, self.tau, 1 - self.sigma) + 1
-        #              ) 
-        self.eta = self.eta_prior + np.sum(self.sigma)
-        self.zeta = self.zeta_prior + np.sum(1 - self.sigma)
+        self.eta = (self.delta_rho * (self.eta_prior - 1) + 
+                    np.einsum('ik,jm,ij', self.tau, self.tau, self.sigma) + 1
+                    )
+        self.zeta = (self.delta_rho * (self.zeta_prior -1 ) + 
+                     np.einsum('ik,jm,ij', self.tau, self.tau, 1 - self.sigma) + 1
+                     ) 
+        # self.eta = self.eta_prior + np.sum(self.sigma)
+        # self.zeta = self.zeta_prior + np.sum(1 - self.sigma)
 
     def _update_q_lam(self):
         """
@@ -583,14 +583,14 @@ class VariationalBayes:
 
         ## Empty arrays for storage
         if self.infer_graph_bool:
-            # self.eta_store = np.zeros((len(self.intervals) + 1, 
-            #                            self.num_groups, 
-            #                            self.num_groups))
-            # self.zeta_store = np.zeros((len(self.intervals) + 1, 
-            #                             self.num_groups, 
-            #                             self.num_groups))
-            self.eta_store = np.zeros((len(self.intervals) + 1, ))
-            self.zeta_store = np.zeros((len(self.intervals) + 1, ))
+            self.eta_store = np.zeros((len(self.intervals) + 1, 
+                                       self.num_groups, 
+                                       self.num_groups))
+            self.zeta_store = np.zeros((len(self.intervals) + 1, 
+                                        self.num_groups, 
+                                        self.num_groups))
+            # self.eta_store = np.zeros((len(self.intervals) + 1, ))
+            # self.zeta_store = np.zeros((len(self.intervals) + 1, ))
             self.lam_big_store = np.zeros((self.num_nodes, self.num_nodes))
         if self.infer_num_groups_bool:
             self.omega_store = np.zeros((len(self.intervals) + 1,
@@ -658,10 +658,10 @@ class VariationalBayes:
                 self.zeta = self.zeta_prior
 
                 # Store parameter value
-                # self.eta_store[0,:,:] = self.eta
-                # self.zeta_store[0,:,:] = self.zeta
-                self.eta_store[0] = self.eta
-                self.zeta_store[0] = self.zeta
+                self.eta_store[0,:,:] = self.eta
+                self.zeta_store[0,:,:] = self.zeta
+                # self.eta_store[0] = self.eta
+                # self.zeta_store[0] = self.zeta
 
             # Set parameter value
             self.gamma = self.gamma_prior
@@ -733,10 +733,10 @@ class VariationalBayes:
                 self.omega_prior = self.omega.copy()
             else:
                 if self.infer_graph_bool:
-                    # self.eta_prior = self.eta.copy()
-                    # self.zeta_prior = self.zeta.copy()
-                    self.eta_prior = self.eta
-                    self.zeta_prior = self.zeta
+                    self.eta_prior = self.eta.copy()
+                    self.zeta_prior = self.zeta.copy()
+                    # self.eta_prior = self.eta
+                    # self.zeta_prior = self.zeta
                 self.gamma_prior = self.gamma.copy()
                 
             ## Detect if any change points
@@ -801,10 +801,10 @@ class VariationalBayes:
                 self.omega_store[it_num + 1,:] = self.omega
             else:
                 if self.infer_graph_bool:
-                    # self.eta_store[it_num + 1,:,:] = self.eta
-                    # self.zeta_store[it_num + 1,:,:] = self.zeta
-                    self.eta_store[it_num + 1] = self.eta
-                    self.zeta_store[it_num + 1] = self.zeta
+                    self.eta_store[it_num + 1,:,:] = self.eta
+                    self.zeta_store[it_num + 1,:,:] = self.zeta
+                    # self.eta_store[it_num + 1] = self.eta
+                    # self.zeta_store[it_num + 1] = self.zeta
                 self.gamma_store[it_num + 1,:] = self.gamma
 
 # %%
