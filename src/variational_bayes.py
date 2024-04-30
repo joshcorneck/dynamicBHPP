@@ -13,10 +13,10 @@ class VariationalBayes:
     def __init__(self, sampled_network: Dict[int, Dict[int, list]]=None, 
                  num_nodes: int=None, num_groups: int=None, alpha_0: float=None, 
                  beta_0: float=None, gamma_0: np.array=None, adj_mat: np.array=None,
-                 infer_graph_bool: bool=False, sigma_0: np.array=None, eta_0: float=None, 
-                 zeta_0: float=None, infer_num_groups_bool: bool=False, 
-                 num_var_groups: int=None, nu_0: float=None, int_length: float=1, 
-                 T_max: float=50) -> None:
+                 infer_graph_bool: bool=False, num_groups_prime: int=None, sigma_0: np.array=None, 
+                 eta_0: float=None, zeta_0: float=None, xi_0: float=None, 
+                 infer_num_groups_bool: bool=False, num_var_groups: int=None, nu_0: float=None, 
+                 int_length: float=1, T_max: float=50) -> None:
         
         """
         A class to run a full variational Bayesian inference procedure for a network
@@ -86,7 +86,7 @@ class VariationalBayes:
         self.infer_num_groups_bool = infer_num_groups_bool
 
         ## Network parameters
-        self.num_nodes = num_nodes; self.num_groups = num_groups
+        self.num_nodes = num_nodes; self.num_groups = num_groups; self.num_groups_prime = num_groups_prime
         self.T_max = T_max; self.sampled_network = sampled_network
         
         ## Sampling parameters
@@ -140,7 +140,9 @@ class VariationalBayes:
             self.beta_prior = np.tile([beta_0], 
                                     (num_groups, num_groups))
             self.gamma_prior = gamma_0
+            self.xi_prior = xi_0
             self.tau = np.zeros((self.num_nodes, self.num_groups))
+            self.tau_prime = np.zeros((self.num_nodes, self.num_groups_prime))
         
     def _compute_eff_count(self, update_time: float):
         """
@@ -167,7 +169,7 @@ class VariationalBayes:
                     )
         self.full_count = self.full_count + self.eff_count
 
-    def _update_q_a(self, update_time):
+    def _update_q_a(self):
         """
         Function to compute gradient ascent updates for q_a based on ADAM procedure.
         Parameters:
@@ -175,179 +177,8 @@ class VariationalBayes:
             - N_runs_ADAM: number of iterations on each ADAM run.
             - N_samples: number of samples of a to draw on each gradient estimation.
         """
-    # def _update_q_a(self, beta1, beta2, alpha0, N_runs_ADAM, N_samples):
-    #     """
-    #     Function to compute gradient ascent updates for q_a based on ADAM procedure.
-    #     Parameters:
-    #         - beta1, beta2, alpha0: parameters for ADAM.
-    #         - N_runs_ADAM: number of iterations on each ADAM run.
-    #         - N_samples: number of samples of a to draw on each gradient estimation.
-    #     """
-
-        # def _log_joint(a, x, z, rho, lambda_, pi):
-        #     # CHECK IF WE WANT DEPENDENCE ON FULL DATA OR JUST OBSERVATION WINDOW
-        #     term1a = np.einsum('lij,ik,jm,ij,km -> l', a, z, z, x, np.log(lambda_),
-        #                        optimize='optimal')
-        #     term1b = np.einsum('lij,ik,jm,km -> l', a, z, z, -self.update_time * lambda_,
-        #                        optimize='optimal')
-        #     term1c = np.einsum('ik,jm,lij,km -> l', z, z, a, np.log(rho),
-        #                        optimize='optimal')
-        #     term1d = np.einsum('ik,jm,lij,km -> l', z, z,(1 - a), np.log(1 - rho),
-        #                        optimize='optimal')
-        #     term1 = term1a + term1b + term1c + term1d
-            
-        #     term2a = np.matmul(z, np.log(pi)).sum()
-        #     term2b = ((self.gamma - 1) * np.log(pi) + gammaln(self.gamma)).sum()
-        #     term2c = gammaln(np.sum(self.gamma))
-        #     term2 = term2a + term2b + term2c
-
-        #     term3 = (
-        #         gammaln(self.eta + self.zeta) - gammaln(self.eta) -
-        #         gammaln(self.zeta) + (self.eta - 1) * np.log(rho) +
-        #         (self.zeta - 1) * np.log(1 - rho) + 
-        #         self.alpha * np.log(self.beta) - gammaln(self.alpha) + 
-        #         (self.alpha - 1) * np.log(lambda_) - self.beta * lambda_
-        #     ).sum()
-        
-        #     return term1 + term2 + term3
-        
-        # def _q_z(z_val, tau) -> np.array:
-        #     # z_val.shape = (num_nodes, num_groups) - returns np.array of
-        #     # shape (num_nodes, ) of the maximum tau value
-        #     return tau[z_val == 1]
-        
-        # def _q_a(a_val, sigma) -> np.array:
-        #     pmf_val = (
-        #         sigma[np.newaxis, ...] ** a_val * 
-        #         (1 - sigma[np.newaxis, ...]) ** (1 - a_val)
-        #     )
-        #     # If there is at least one observation, then the pmf is 1
-        #     pmf_val[:, self.x_bool] = 1
-        #     return pmf_val
-
-
-        # def _q_pi(pi_val, gamma) -> np.array:
-        #     pdf_val = dirichlet.pdf(pi_val, gamma)
-        #     return pdf_val
-
-        # def _q_lambda(lambda_val, alpha, beta) -> np.array:
-        #     pdf_val = gamma_.pdf(lambda_val, a=alpha, scale=1/beta)
-        #     return pdf_val
-        
-        # def _q_rho(rho_val, eta, zeta) -> np.array:
-        #     pdf_val = beta_.pdf(rho_val, a=eta, b=zeta)
-        #     return pdf_val
-
-        # def _approx_grad_LB(x_val, z_val, a_samples, pi_val, lambda_val, rho_val):
-        #     # Gradient here is taken with respect to reparameterised sigma via
-        #     # the sigmoid function
-        #     grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
-        #     # Compute h by flattening the output of each q_ function and 
-        #     # summing their logarithms
-        #     h = _log_joint(a_samples, x_val, z_val, rho_val, lambda_val, pi_val)
-        #     q_flat = np.tile(
-        #         np.concatenate([
-        #         _q_z(z_val, self.tau).flatten(), 
-        #         _q_pi(pi_val, self.gamma).flatten(),
-        #         _q_lambda(lambda_val, self.alpha, self.beta).flatten(),
-        #         _q_rho(rho_val, self.eta, self.zeta).flatten()
-        #     ]), (a_samples.shape[0], 1)
-        #     )
-        #     q_flat = np.concatenate([q_flat, 
-        #                              _q_a(a_samples, self.sigma).
-        #                              reshape((a_samples.shape[0], -1))],
-        #                             axis=1)
-        #     h -= np.sum(np.log(q_flat), axis=1)
-
-        #     # This is now the gradient 
-        #     start = time.time()
-        #     grad_LB = np.zeros((a_samples.shape[0], self.num_nodes, self.num_nodes))
-        #     sigma_exp = self.sigma[np.newaxis, :, :]
-        #     grad_LB = (
-        #         ((a_samples - sigma_exp) * 
-        #          np.broadcast_to(self.x_bool, 
-        #                         (a_samples.shape[0], self.num_nodes, self.num_nodes)))
-        #     )
-        #     grad_LB *= np.broadcast_to(h[:, np.newaxis, np.newaxis], 
-        #                                (a_samples.shape[0], self.num_nodes, self.num_nodes))
-        #     return grad_LB.mean(axis=0)
-        
-        # def _ADAM(beta1, beta2, alpha0, sigma0, g0, N_runs_ADAM,  
-        #           N_samples, x_val, z_val, pi_val, lambda_val, rho_val):
-            
-        #     g_t = g0; g_bar = g0; v_bar = g0 ** 2
-        #     sigma_t_tilde = np.zeros((self.num_nodes, self.num_nodes))
-        #     sigma_t = np.ones((self.num_nodes, self.num_nodes))
-        #     sigma_t_tilde[~self.x_bool] = np.log(sigma0[~self.x_bool]/(1-sigma0[~self.x_bool]))
-        #     for t in range(N_runs_ADAM):
-        #         print(f"ADAM Iteration: {t}")
-        #         alpha0 = alpha0 ** (t + 1)
-        #         # Update estimate - gt is 0 for elements that have seen an observation
-        #         not_x_bool = ~self.x_bool
-        #         g_bar[not_x_bool] = (
-        #             beta1 * g_bar[not_x_bool] + (1 - beta1) * g_t[not_x_bool]
-        #         )
-        #         v_bar[not_x_bool] = (
-        #             beta2 * v_bar[not_x_bool] + (1 - beta2) * (g_t[not_x_bool] ** 2)
-        #         )
-        #         sigma_t_tilde[not_x_bool] += (
-        #             alpha0 * g_bar[not_x_bool] / np.sqrt(v_bar[not_x_bool])
-        #         )
-        #         sigma_t[not_x_bool] = 1 / (1 + np.exp(-sigma_t_tilde[not_x_bool]))
-        #         self.sigma = sigma_t
-
-        #         # Update the gradient
-        #         # Generate N_samples from a
-        #         a_samples = np.ones((N_samples, self.num_nodes, self.num_nodes))
-        #         u = np.random.uniform(0, 1, (N_samples, self.num_nodes, self.num_nodes))
-        #         u_bool = u > self.sigma[np.newaxis, ...]
-        #         a_samples[u_bool] = 0
-        #         a_samples[:, self.x_bool] = 1
-        #         # Gradient with respect to sigma_tilde
-        #         g_t = _approx_grad_LB(x_val, z_val, a_samples, pi_val, 
-        #                               lambda_val, rho_val)
-                
-        
-        # def run_sigma_update(x_val, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples):
-        #     """
-        #     Run the full ADAM optimisation to infer parameter values.
-        #     Parameters:
-        #         - x_val: n_nodes x n_nodes array of edge counts up to current time.
-        #         - beta1, beta2, alpha0, g0:  ADAM parameters.
-        #         - N_runs_ADAM, N_samp: number of ADAM iterations and number of
-        #                                 sigma samples to draw to estimate gradient.
-        #     """
-        #     ###
-        #     # STEP 1
-        #     ###
-
-        #     # Sample values for a_val, z_val, pi_val, rho_val and lambda_val
-        #     # (computed using the mean of current approximate posteriors)
-        #     # z, pi, rho, lambda
-        #     tau_max_idx = self.tau.argmax(axis=1)
-        #     z_val = np.zeros((self.num_nodes, self.num_groups))
-        #     z_val[np.arange(self.num_nodes), tau_max_idx] = 1
-        #     pi_val = self.gamma / self.gamma.sum()
-        #     rho_val = self.eta / (self.eta + self.zeta)
-        #     lambda_val = self.alpha / self.beta
-
-        #     ###
-        #     # STEP 2
-        #     ###
-        #     _ADAM(beta1, beta2, alpha0, self.sigma, g0, N_runs_ADAM,  
-        #           N_samples, x_val, z_val, pi_val, lambda_val, rho_val)
-        #     self.sigma[self.x_bool] = 1
-        #     np.fill_diagonal(self.sigma, 0)
-            
-        # # UPDATE SIGMA ESTIMATE
-        # # Boolean for whether there is a.s. an edge
-        # self.x_bool = self.full_count > 0
-        # g0 = np.ones((self.num_nodes, self.num_nodes))
-        # run_sigma_update(self.full_count, beta1, beta2, alpha0, g0, N_runs_ADAM, N_samples)
-
-        # TESTING
         tau_max_idx = self.tau.argmax(axis=1)
-        z_val = np.zeros((self.num_nodes, self.num_groups))
+        z_val = np.zeros((self.num_nodes, self.num_groups_prime))
         z_val[np.arange(self.num_nodes), tau_max_idx] = 1
         rho_val = self.eta / (self.eta + self.zeta)
         lambda_val = self.alpha / self.beta
@@ -369,10 +200,6 @@ class VariationalBayes:
                                   reshape(self.num_nodes, self.num_nodes))  
         self.sigma = (rho_big * np.exp(-self.int_length * self.lam_big_store) / 
                       (1 - rho_big + rho_big * np.exp(-self.int_length * self.lam_big_store)))
-        # self.sigma = (rho_val * np.exp(-update_time * lam_big) / 
-        #               (1 - rho_val + rho_val * np.exp(-update_time * lam_big)))
-        # self.sigma = (rho_val * np.exp(-self.int_length * self.lam_big_store) / 
-                    #   (1 - rho_val + rho_val * np.exp(-self.int_length * self.lam_big_store)))
         # True if there is at least one observation
         self.sigma[self.full_count > 0] = 1
         np.fill_diagonal(self.sigma, 0)
@@ -411,26 +238,8 @@ class VariationalBayes:
                             digamma(self.alpha) - np.log(self.beta))
             term3b = np.einsum('jm,ji,ji,mk -> ik', self.tau_prior, self.eff_count, self.sigma, 
                             digamma(self.alpha) - np.log(self.beta))
-            term4a = np.einsum('jm,ij,km -> ik', self.tau_prior, self.sigma, 
-                            digamma(self.eta) - digamma(self.eta + self.zeta))
-            term4b = np.einsum('jm,ji,mk -> ik', self.tau_prior, self.sigma, 
-                            digamma(self.eta) - digamma(self.eta + self.zeta))
-            term5a = np.einsum('jm,ij,km -> ik', self.tau_prior, 1 - self.sigma, 
-                            digamma(self.zeta) - digamma(self.eta + self.zeta))
-            term5b = np.einsum('jm,ji,mk -> ik', self.tau_prior, 1 - self.sigma, 
-                            digamma(self.zeta) - digamma(self.eta + self.zeta))
-            tau_temp = (term1 + term2a + term2b + term3a + term3b + term4a + term4b + 
-                        term5a + term5b)
-            # term1 = self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum()))
-            # term2a = np.einsum('jm,ij,km -> ik', self.tau_prior, -self.int_length * self.sigma, 
-            #                    self.alpha / self.beta)
-            # term2b = np.einsum('jm,ji,mk -> ik', self.tau_prior, -self.int_length * self.sigma, 
-            #                    self.alpha / self.beta)
-            # term3a = np.einsum('jm,ij,ij,km -> ik', self.tau_prior, self.eff_count, self.sigma, 
-            #                 digamma(self.alpha) - np.log(self.beta))
-            # term3b = np.einsum('jm,ji,ji,mk -> ik', self.tau_prior, self.eff_count, self.sigma, 
-            #                 digamma(self.alpha) - np.log(self.beta))
-            # tau_temp = (term1 + term2a + term2b + term3a + term3b)
+            tau_temp = (term1 + term2a + term2b + term3a + term3b)
+
         else:
             term1 = self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum()))
             term2 = np.einsum('ij,jm,ij,km -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
@@ -443,10 +252,30 @@ class VariationalBayes:
                               -self.int_length * self.alpha/self.beta)
             tau_temp = term1 + term2 + term3 + term4 + term5
 
-
         # Convert to exponential and normalise using logsumexp
         self.tau = np.exp(tau_temp - logsumexp(tau_temp, axis=1)[:,None])
         self.tau_prior = self.tau.copy()
+
+    def _update_q_z_prime(self):
+        """
+        A method to compute the CAVI approximation to the posterior of z.
+        This is computed differently depending on the value of 
+        infer_graph_structure and infer_number_groups. 
+        """
+        term1 = self.delta_z * (digamma(self.xi) - digamma(self.xi.sum()))
+        term2a = np.einsum('jm,ij,km -> ik', self.tau_prime_prior, self.sigma, 
+                        digamma(self.eta) - digamma(self.eta + self.zeta))
+        term2b = np.einsum('jm,ji,mk -> ik', self.tau_prime_prior, self.sigma, 
+                        digamma(self.eta) - digamma(self.eta + self.zeta))
+        term3a = np.einsum('jm,ij,km -> ik', self.tau_prime_prior, 1 - self.sigma, 
+                        digamma(self.zeta) - digamma(self.eta + self.zeta))
+        term3b = np.einsum('jm,ji,mk -> ik', self.tau_prime_prior, 1 - self.sigma, 
+                        digamma(self.zeta) - digamma(self.eta + self.zeta))
+        tau_temp = (term1 + term2a + term2b + term3a + term3b)
+
+        # Convert to exponential and normalise using logsumexp
+        self.tau_prime = np.exp(tau_temp - logsumexp(tau_temp, axis=1)[:,None])
+        self.tau_prime_prior = self.tau_prime.copy()
 
     def _update_q_pi(self):
         """
@@ -457,20 +286,28 @@ class VariationalBayes:
             self.delta_pi * (self.gamma_prior - 1) + 
             self.tau.sum(axis=0) + 1
         )
-        
+    
+    def _update_q_mu(self):
+        """
+        A method to compute the CAVI approximation to the posterior of pi.
+        This is only run if infer_graph_structure = True.
+        """
+        self.xi = (
+            self.delta_mu * (self.xi_prior - 1) + 
+            self.tau_prime.sum(axis=0) + 1
+        )
+
     def _update_q_rho(self):
         """
         A method to compute the CAVI approximation to the posterior of rho.
         This is only run if infer_graph_structure = True.
         """
         self.eta = (self.delta_rho * (self.eta_prior - 1) + 
-                    np.einsum('ik,jm,ij', self.tau, self.tau, self.sigma) + 1
+                    np.einsum('ik,jm,ij', self.tau_prime, self.tau_prime, self.sigma) + 1
                     )
         self.zeta = (self.delta_rho * (self.zeta_prior -1 ) + 
-                     np.einsum('ik,jm,ij', self.tau, self.tau, 1 - self.sigma) + 1
+                     np.einsum('ik,jm,ij', self.tau_prime, self.tau_prime, 1 - self.sigma) + 1
                      ) 
-        # self.eta = self.eta_prior + np.sum(self.sigma)
-        # self.zeta = self.zeta_prior + np.sum(1 - self.sigma)
 
     def _update_q_lam(self):
         """
@@ -505,7 +342,6 @@ class VariationalBayes:
         for j in range(self.num_var_groups):
             sum_term[:] = self.tau[:,(j+1):].sum(axis=1) 
             self.nu[j] = sum_term.sum() + self.nu_prior[j]
-
 
     def _MAD_KL_outlier_detector(self, alpha, beta, max_lag, cutoff):
         """
@@ -549,13 +385,11 @@ class VariationalBayes:
         else: 
             return 0
 
-    def run_full_var_bayes(self, delta_pi: float=1, delta_lam: float=1, 
-                           delta_rho:float=1, delta_z:float=1, n_cavi: int=2, 
+    def run_full_var_bayes(self, delta_pi: float=1, delta_mu: float=1, delta_lam: float=1, 
+                           delta_rho: float=1, delta_z:float=1, n_cavi: int=2, 
                            cp_burn_steps: int=10, cp_stationary_steps: int=10,
                            cp_kl_lag_steps: int=2, cp_kl_thresh: float=10, 
-                           cp_rate_wait: float=0.5, ARLO_bool: bool=False, 
-                           beta1: float=0.9, beta2: float=0.99, alpha0: float=0.01, 
-                           N_runs_ADAM: int=5, N_samples: int=100):
+                           cp_rate_wait: float=0.5, ARLO_bool: bool=False):
         """
         A method to run the variational Bayesian update in its entirety.
         Parameters:
@@ -570,6 +404,7 @@ class VariationalBayes:
                             to the rate of the process.
         """
         ## Decay rates for the prior
+        self.delta_mu = delta_mu
         self.delta_pi = delta_pi
         self.delta_rho = delta_rho
         self.delta_lam_BFF = delta_lam
@@ -584,13 +419,17 @@ class VariationalBayes:
         ## Empty arrays for storage
         if self.infer_graph_bool:
             self.eta_store = np.zeros((len(self.intervals) + 1, 
-                                       self.num_groups, 
-                                       self.num_groups))
+                                       self.num_groups_prime, 
+                                       self.num_groups_prime))
             self.zeta_store = np.zeros((len(self.intervals) + 1, 
-                                        self.num_groups, 
-                                        self.num_groups))
-            # self.eta_store = np.zeros((len(self.intervals) + 1, ))
-            # self.zeta_store = np.zeros((len(self.intervals) + 1, ))
+                                        self.num_groups_prime, 
+                                        self.num_groups_prime))
+            self.xi_store = np.zeros((len(self.intervals) + 1, 
+                                        self.num_groups_prime))
+            self.tau_prime_store = np.zeros((len(self.intervals) + 1, 
+                                        self.num_nodes, 
+                                        self.num_groups_prime))
+            
             self.lam_big_store = np.zeros((self.num_nodes, self.num_nodes))
         if self.infer_num_groups_bool:
             self.omega_store = np.zeros((len(self.intervals) + 1,
@@ -628,12 +467,20 @@ class VariationalBayes:
                 .reshape((self.num_nodes, self.num_var_groups))
             )
         else:
+            if self.infer_graph_bool:
+                self.tau_prime_prior = (
+                np.array([1 / self.num_groups_prime] * (self.num_nodes * self.num_groups_prime))
+                .reshape((self.num_nodes, self.num_groups_prime))
+            )
             self.tau_prior = (
                 np.array([1 / self.num_groups] * (self.num_nodes * self.num_groups))
                 .reshape((self.num_nodes, self.num_groups))
             )
         # Store parameter value
         self.tau_store[0,:,:] = self.tau_prior
+        if self.infer_graph_bool:
+            # Store parameter value
+            self.tau_prime_store[0,:,:] = self.tau_prime_prior
 
         # Set parameter value
         self.alpha = self.alpha_prior
@@ -651,17 +498,18 @@ class VariationalBayes:
             # Store parameter value
             self.nu_store[0,:] = self.nu_prior
             self.omega_store[0,:] = self.omega_prior
+
         else:
             if self.infer_graph_bool:
                 # Set parameter value
                 self.eta = self.eta_prior
                 self.zeta = self.zeta_prior
+                self.xi = self.xi_prior
 
                 # Store parameter value
                 self.eta_store[0,:,:] = self.eta
                 self.zeta_store[0,:,:] = self.zeta
-                # self.eta_store[0] = self.eta
-                # self.zeta_store[0] = self.zeta
+                self.xi_store[0,:] = self.xi
 
             # Set parameter value
             self.gamma = self.gamma_prior
@@ -687,26 +535,15 @@ class VariationalBayes:
 
             ## Update estimates (run CAVI n_cavi times)
             if self.infer_graph_bool:
-                # full_count = 0
-                # while full_count < 3:
-                #     cavi_count = 0
-                #     while cavi_count < n_cavi:
-                #         self._update_q_z()
-                #         self._update_q_pi()
-                #         self._update_q_lam()
-                #         self._update_q_rho()
-                #         cavi_count += 1
-                #     # self._update_q_a(beta1, beta2, alpha0, 
-                #     #                  N_runs_ADAM, N_samples)
-                #     self._update_q_a(update_time)
-                #     full_count += 1
                 cavi_count = 0
                 while cavi_count < n_cavi:
                     self._update_q_z()
+                    self._update_q_z_prime()
                     self._update_q_pi()
+                    self._update_q_mu()
                     self._update_q_lam()
                     self._update_q_rho()
-                    self._update_q_a(update_time)
+                    self._update_q_a()
                     cavi_count += 1
 
             elif self.infer_num_groups_bool:
@@ -733,10 +570,11 @@ class VariationalBayes:
                 self.omega_prior = self.omega.copy()
             else:
                 if self.infer_graph_bool:
+                    self.tau_prime_prior = self.tau_prime.copy()
                     self.eta_prior = self.eta.copy()
                     self.zeta_prior = self.zeta.copy()
-                    # self.eta_prior = self.eta
-                    # self.zeta_prior = self.zeta
+                    self.xi_prior = self.xi.copy()
+                    
                 self.gamma_prior = self.gamma.copy()
                 
             ## Detect if any change points
@@ -801,10 +639,10 @@ class VariationalBayes:
                 self.omega_store[it_num + 1,:] = self.omega
             else:
                 if self.infer_graph_bool:
+                    self.tau_prime_store[it_num + 1,:,:] = self.tau_prime
                     self.eta_store[it_num + 1,:,:] = self.eta
                     self.zeta_store[it_num + 1,:,:] = self.zeta
-                    # self.eta_store[it_num + 1] = self.eta
-                    # self.zeta_store[it_num + 1] = self.zeta
+                    self.xi_store[it_num + 1,:] = self.xi
                 self.gamma_store[it_num + 1,:] = self.gamma
 
 # %%
