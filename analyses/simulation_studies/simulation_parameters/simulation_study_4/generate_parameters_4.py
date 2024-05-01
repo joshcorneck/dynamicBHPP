@@ -19,7 +19,7 @@ n_cavi_set = [3]
 int_length_set = [0.1]
 delta_set = [0.1]
 T_max = [25]
-connection_prob = [0.01, 0.1, 0.25, 0.5, 0.75, 1]
+connection_prob = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75]
 N_runs_set = [[0, 10], [10, 20], [20, 30], [30, 40], [40, 50]]
 
 
@@ -36,12 +36,12 @@ all_combinations = list(
                       N_runs_set)
 )
 
-# with open("analyses/simulation_studies/"
-#           "simulation_parameters/simulation_study_4/"
-#           "sim_params_simulation_study_4.json", 'w') as json_file:
-#     json.dump(all_combinations, json_file)
+with open("analyses/simulation_studies/"
+          "simulation_parameters/simulation_study_4/"
+          "sim_params_simulation_study_4.json", 'w') as json_file:
+    json.dump(all_combinations, json_file)
 
-# print(len(all_combinations))
+print(len(all_combinations))
 
 # %%
 

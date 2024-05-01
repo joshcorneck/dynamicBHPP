@@ -108,9 +108,9 @@ class VariationalBayes:
             if zeta_0 is None:
                 raise ValueError("Supply zeta_0.")
             self.eta_prior = np.tile([eta_0], 
-                                    (num_groups, num_groups))
+                                    (num_groups_prime, num_groups_prime))
             self.zeta_prior = np.tile([zeta_0], 
-                                    (num_groups, num_groups))
+                                    (num_groups_prime, num_groups_prime))
             # self.eta_prior = eta_0
             # self.zeta_prior = zeta_0
             self.sigma = np.ones((self.num_nodes, self.num_nodes)) * sigma_0
@@ -178,8 +178,14 @@ class VariationalBayes:
             - N_samples: number of samples of a to draw on each gradient estimation.
         """
         tau_max_idx = self.tau.argmax(axis=1)
-        z_val = np.zeros((self.num_nodes, self.num_groups_prime))
+        tau_prime_max_idx = self.tau_prime.argmax(axis=1)
+
+        z_val = np.zeros((self.num_nodes, self.num_groups))
+        z_prime_val = np.zeros((self.num_nodes, self.num_groups_prime))
+        
         z_val[np.arange(self.num_nodes), tau_max_idx] = 1
+        z_prime_val[np.arange(self.num_nodes), tau_prime_max_idx] = 1
+
         rho_val = self.eta / (self.eta + self.zeta)
         lambda_val = self.alpha / self.beta
 
@@ -189,20 +195,20 @@ class VariationalBayes:
         rows, cols = np.meshgrid(np.arange(self.num_nodes), 
                                  np.arange(self.num_nodes), 
                                  indexing='ij')
+        
         lam_big = (lambda_val[tau_max_idx[rows.ravel()],
                                   tau_max_idx[cols.ravel()]].
                                   reshape(self.num_nodes, self.num_nodes))
-        
-        # Store a running sum of the previous lambda values
         self.lam_big_store += lam_big
-        rho_big = (rho_val[tau_max_idx[rows.ravel()],
-                                  tau_max_idx[cols.ravel()]].
+
+        rho_big = (rho_val[tau_prime_max_idx[rows.ravel()],
+                                  tau_prime_max_idx[cols.ravel()]].
                                   reshape(self.num_nodes, self.num_nodes))  
         self.sigma = (rho_big * np.exp(-self.int_length * self.lam_big_store) / 
                       (1 - rho_big + rho_big * np.exp(-self.int_length * self.lam_big_store)))
         # True if there is at least one observation
         self.sigma[self.full_count > 0] = 1
-        np.fill_diagonal(self.sigma, 0)
+        # np.fill_diagonal(self.sigma, 0)
 
     def _update_q_z(self):
         """

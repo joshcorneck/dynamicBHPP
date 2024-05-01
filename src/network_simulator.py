@@ -325,7 +325,7 @@ class PoissonNetwork(BaseNetwork):
             # UNCOMMENT TO MAKE NO NODES SELF-CONNECTED
             # np.fill_diagonal(edge_probs, 0)
             adjacency_matrix = (
-                (np.random.rand(self.num_nodes_prime, self.num_nodes_prime) < edge_probs).astype(int)
+                (np.random.rand(self.num_nodes, self.num_nodes) < edge_probs).astype(int)
             )
         else:
             adjacency_matrix = np.ones((self.num_nodes, self.num_nodes))
@@ -353,7 +353,8 @@ class PoissonNetwork(BaseNetwork):
     def sample_network(self, rate_change: bool = False, mem_change: bool = False, 
                         group_num_change: bool = False,
                         num_rate_cps: int = 0, num_mem_cps: int = 0, 
-                        group_sizes: np.array = None, mem_change_times: np.array = None, 
+                        group_sizes: np.array = None, group_sizes_prime: np.array = None,
+                        mem_change_times: np.array = None, 
                         mem_change_nodes: np.array = None, rate_change_times: np.array = None, 
                         entries_to_change: list = None, rate_matrices: List[np.array] = None,
                         group_num_change_times: np.array = None) -> Dict[int, Dict[int, list]]:
@@ -443,7 +444,8 @@ class PoissonNetwork(BaseNetwork):
                                         rate_change_times, group_num_change_times,
                                         num_mem_cps, num_rate_cps)
 
-        groups_in_regions, initial_groups_prime = self._create_node_memberships(group_sizes, mem_change_nodes)
+        groups_in_regions, initial_groups_prime = self._create_node_memberships(
+            group_sizes=group_sizes, group_sizes_prime=group_sizes_prime, mem_change_nodes=mem_change_nodes)
         # Create rate matrices
         if rate_matrices is None:
             self._create_rate_matrices(sigma=2, entries_to_change=entries_to_change)
