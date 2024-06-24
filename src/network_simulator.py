@@ -1,3 +1,6 @@
+"""
+This file contains a class for simulation a BHPP.
+"""
 import numpy as np
 from more_itertools import flatten
 from abc import ABC, abstractmethod
@@ -176,8 +179,7 @@ class PoissonNetwork(BaseNetwork):
         Parameters:
             - group_sizes: the number of number of nodes in each group. The length must
                             be the same as the number of groups.
-            # - group_assignment_type: how we split the group memberships over the nodes. This
-            #                             can be any of "sequential",  "alternate" or "random".
+            - mem_change_nodes: the nodes that will change membership.
         """
         if group_sizes is None:
             raise ValueError("Supply group sizes.")
@@ -363,16 +365,19 @@ class PoissonNetwork(BaseNetwork):
         Parameters:
             - rate_change: bool for whether we have a change in the rate matrix.
             - mem_change: bool for whether we have a change in the group memberships.
-            - num_mem_cps: the number of membership change points we observe.
+            - group_num_change: bool for whether we have a change in the number of groups.
             - num_rate_cps: the number of rate change points we observe.
-            # - group_assignment_type: how we split the group memberships over the nodes. This
-            #                         can be any of "sequential",  "alternate" or "random".
+            - num_mem_cps: the number of membership change points we observe.
             - group_sizes: the number of nodes in each group (must sum to num_nodes).
-            - mem_change_point_times: the times of the changes (must have length equal to num_mem_cps).
+            - group_sizes_prime: the number of nodes in each group for the adjacency matrix (must sum to num_nodes).
+            - mem_change_times: the times of the changes to group memberships (must have length equal to num_mem_cps).
             - mem_change_nodes: the nodes that change at each change point (must have length equal to 
                                 num_mem_cps).
+            - rate_change_times: the times of the changes to the latent rates (must have length equal to 
+                                num_rate_cps).
             - entries_to_change: the entry of the rate matrix that changes at each change point.
             - rate_matrices: list of rate matrices.
+            - group_num_change_times: the times when the number of groups changes.
         """
         ###
         # STEP 1

@@ -10,7 +10,8 @@ import time
 
 class VariationalBayes:
 
-    def __init__(self, sampled_network: Dict[int, Dict[int, list]]=None, 
+    def __init__(self, sampled_network: Dict[int, Dict[int, list]]=None,
+                 eff_count_dict_list: list[Dict[int, Dict[int, list]]] = None,
                  num_nodes: int=None, num_groups: int=None, alpha_0: float=None, 
                  beta_0: float=None, gamma_0: np.array=None, adj_mat: np.array=None,
                  infer_graph_bool: bool=False, num_groups_prime: int=None, sigma_0: np.array=None, 
@@ -86,9 +87,16 @@ class VariationalBayes:
         self.infer_num_groups_bool = infer_num_groups_bool
 
         ## Network parameters
-        self.num_nodes = num_nodes; self.num_groups = num_groups; self.num_groups_prime = num_groups_prime
-        self.T_max = T_max; self.sampled_network = sampled_network
+        self.num_nodes = num_nodes; self.num_groups = num_groups; 
+        self.num_groups_prime = num_groups_prime; self.T_max = T_max
         
+        if sampled_network is not None:
+            self.sampled_network = sampled_network
+            self.sampled_network_bool = True
+        else:
+            self.eff_count_dict = eff_count_dict_list
+            self.sampled_network_bool = False
+
         ## Sampling parameters
         self.intervals = np.arange(int_length, T_max + int_length, int_length)
         self.int_length = int_length
@@ -97,7 +105,6 @@ class VariationalBayes:
         self.full_count = np.zeros((self.num_nodes, self.num_nodes))
         self.eff_obs_time = np.zeros((self.num_nodes, self.num_nodes))
         self.eff_obs_time.fill(self.int_length)
-        self.int_length_temp = self.int_length
 
         ## Algorithm parameters 
         if infer_graph_bool:
@@ -169,6 +176,24 @@ class VariationalBayes:
                     )
         self.full_count = self.full_count + self.eff_count
 
+    def _compute_eff_count_large(self, update_time_idx: int):
+        """
+        A method to compute the effective count on each edge. This is simply 
+        the number of observations on an edge from update_time - int_length to
+        update_time. Parameters:
+            - update_time: time at which we run the update.  
+        """
+        for i in range(self.num_nodes):
+            for j in range(self.num_nodes):
+                if self.eff_count_dict[update_time_idx][i][j] is None:
+                    self.eff_count[i,j] = 0
+                else:
+                    self.eff_count[i,j] = (
+                        self.eff_count_dict[update_time_idx][i][j][0]
+                    )
+
+        self.full_count = self.full_count + self.eff_count
+
     def _update_q_a(self):
         """
         Function to compute gradient ascent updates for q_a based on ADAM procedure.
@@ -233,55 +258,193 @@ class VariationalBayes:
                               digamma(self.alpha) - np.log(self.beta))
             term5 = np.einsum('ji,jm,mk -> ik', self.adj_mat, self.tau_prior, 
                               -self.int_length * self.alpha/self.beta)
+            
             tau_temp = term1 + term2 + term3 + term4 + term5
         elif self.infer_graph_bool:
-            term1 = self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum()))
-            term2a = np.einsum('jm,ij,km -> ik', self.tau_prior, -self.int_length * self.sigma, 
-                               self.alpha / self.beta)
-            term2b = np.einsum('jm,ji,mk -> ik', self.tau_prior, -self.int_length * self.sigma, 
-                               self.alpha / self.beta)
-            term3a = np.einsum('jm,ij,ij,km -> ik', self.tau_prior, self.eff_count, self.sigma, 
-                            digamma(self.alpha) - np.log(self.beta))
-            term3b = np.einsum('jm,ji,ji,mk -> ik', self.tau_prior, self.eff_count, self.sigma, 
-                            digamma(self.alpha) - np.log(self.beta))
-            tau_temp = (term1 + term2a + term2b + term3a + term3b)
-
+            # term1 = (self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum())))
+            # term2a = np.einsum('jm,ij,km -> ik', self.tau_prior, -self.int_length * self.sigma, 
+            #                    self.alpha / self.beta)
+            # term2b = np.einsum('jm,ji,mk -> ik', self.tau_prior, -self.int_length * self.sigma, 
+            #                    self.alpha / self.beta)
+            # term3a = np.einsum('jm,ij,ij,km -> ik', self.tau_prior, self.eff_count, self.sigma, 
+            #                 digamma(self.alpha) - np.log(self.beta))
+            # term3b = np.einsum('jm,ji,ji,mk -> ik', self.tau_prior, self.eff_count, self.sigma, 
+            #                 digamma(self.alpha) - np.log(self.beta))
+            # term4 = np.outer(-np.diag(self.sigma) * np.diag(self.eff_count), 
+            #                  np.diag(digamma(self.alpha) - np.log(self.beta)))
+            # term5 = np.outer(np.diag(self.sigma), 
+            #                  self.int_length * np.diag(self.alpha / self.beta))
+            # tau_temp = (term1 + term2a + term2b + term3a + term3b + term4 + term5)
+            digamma_diff = self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum()))
+            digamma_diff_alpha_log_beta = np.diag(digamma(self.alpha) - np.log(self.beta))
+            alpha_beta_ratio = self.int_length * np.diag(self.alpha / self.beta)
+            for i in range(self.num_nodes):
+                tau_temp_i = np.zeros((self.num_groups, ))
+                for k in range(self.num_groups):
+                    tau_temp_i[k] = (digamma_diff[k] + self.sigma[i,i] * ( 
+                                   self.eff_count[i,i] * digamma_diff_alpha_log_beta[k] - 
+                                   alpha_beta_ratio[k])
+                    )
+                    for m in range(self.num_groups):
+                        if m == k:
+                            mask = np.ones((self.num_nodes,), dtype=bool)
+                            mask[i] = False # Exclude i == j and k == m
+                            tau_temp_i[k] += (
+                                (self.tau_prior[mask,m] * 
+                                 (self.sigma[i,mask] * self.eff_count[i,mask] * (
+                                     digamma(self.alpha[k,m]) - np.log(self.beta[k,m])) + 
+                                 self.sigma[mask,i] * self.eff_count[mask,i] * (
+                                     digamma(self.alpha[m,k]) - np.log(self.beta[m,k])) -
+                                 self.int_length * (
+                                     self.sigma[i,mask] * self.alpha[k,m] / self.beta[k,m] +
+                                     self.sigma[mask,i] * self.alpha[m,k] / self.beta[m,k])
+                                 )
+                                ).sum()
+                            )
+                        else:
+                            tau_temp_i[k] += (
+                                (self.tau_prior[:,m] * 
+                                 (self.sigma[i,:] * self.eff_count[i,:] * (
+                                     digamma(self.alpha[k,m]) - np.log(self.beta[k,m])) + 
+                                 self.sigma[:,i] * self.eff_count[:,i] * (
+                                     digamma(self.alpha[m,k]) - np.log(self.beta[m,k])) -
+                                 self.int_length * (
+                                     self.sigma[i,:] * self.alpha[k,m] / self.beta[k,m] +
+                                     self.sigma[:,i] * self.alpha[m,k] / self.beta[m,k])
+                                 )
+                                ).sum()
+                            )
+                # Renormalise the row
+                tau_temp_i_norm = np.exp(tau_temp_i - logsumexp(tau_temp_i))
+                self.tau_prior[i,:] = tau_temp_i_norm
         else:
-            term1 = self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum()))
-            term2 = np.einsum('ij,jm,ij,km -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
-                              digamma(self.alpha) - np.log(self.beta))
-            term3 = np.einsum('ij,jm,km -> ik', self.adj_mat, self.tau_prior, 
-                              -self.int_length * self.alpha/self.beta)
-            term4 = np.einsum('ji,jm,ji,mk -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
-                              digamma(self.alpha) - np.log(self.beta))
-            term5 = np.einsum('ji,jm,mk -> ik', self.adj_mat, self.tau_prior, 
-                              -self.int_length * self.alpha/self.beta)
-            tau_temp = term1 + term2 + term3 + term4 + term5
+            # term1 = (self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum())) - 
+            #          self.int_length * np.diag(self.alpha / self.beta))
+            # term2 = np.einsum('ij,jm,ij,km -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
+            #                   digamma(self.alpha) - np.log(self.beta))
+            # term3 = np.einsum('ij,jm,km -> ik', self.adj_mat, self.tau_prior, 
+            #                   -self.int_length * self.alpha/self.beta)
+            # term4 = np.einsum('ji,jm,ji,mk -> ik', self.adj_mat, self.tau_prior, self.eff_count, 
+            #                   digamma(self.alpha) - np.log(self.beta))
+            # term5 = np.einsum('ji,jm,mk -> ik', self.adj_mat, self.tau_prior, 
+            #                   -self.int_length * self.alpha/self.beta)
+            # term6 = np.outer(np.diag(self.eff_count), 
+            #                     np.diag(digamma(self.alpha) - np.log(self.beta)))   
+            # tau_temp = term1 + term2 + term3 + term4 + term5 + term6
 
-        # Convert to exponential and normalise using logsumexp
-        self.tau = np.exp(tau_temp - logsumexp(tau_temp, axis=1)[:,None])
-        self.tau_prior = self.tau.copy()
+            digamma_diff = self.delta_z * (digamma(self.gamma) - digamma(self.gamma.sum()))
+            digamma_diff_alpha_log_beta = np.diag(digamma(self.alpha) - np.log(self.beta))
+            alpha_beta_ratio = self.int_length * np.diag(self.alpha / self.beta)
+            for i in range(self.num_nodes):
+                tau_temp_i = np.zeros((self.num_groups, ))
+                for k in range(self.num_groups):
+                    tau_temp_i[k] = (digamma_diff[k] + 
+                                   self.eff_count[i,i] * digamma_diff_alpha_log_beta[k] - 
+                                   alpha_beta_ratio[k])
+                    for m in range(self.num_groups):
+                        if m == k:
+                            mask = np.ones((self.num_nodes,), dtype=bool)
+                            mask[i] = False # Exclude i == j and k == m
+                            tau_temp_i[k] += (
+                                (self.tau_prior[mask,m] * self.adj_mat[i,mask] * 
+                                (self.eff_count[i,mask] * (
+                                digamma(self.alpha[k,m]) - np.log(self.beta[k,m])) - 
+                                self.int_length * self.alpha[k,m] / self.beta[k,m])).sum() +
+                                (self.tau_prior[mask,m] * self.adj_mat[mask,i] *
+                                (self.eff_count[mask,i] * (
+                                digamma(self.alpha[m,k]) - np.log(self.beta[m,k])) - 
+                                self.int_length * self.alpha[m,k] / self.beta[m,k])).sum()
+                                )
+                        else:
+                            tau_temp_i[k] += (
+                                (self.tau_prior[:,m] * self.adj_mat[i,:] * 
+                                (self.eff_count[i,:] * (
+                                digamma(self.alpha[k,m]) - np.log(self.beta[k,m])) - 
+                                self.int_length * self.alpha[k,m] / self.beta[k,m])).sum() +
+                                (self.tau_prior[:,m] * self.adj_mat[:,i] *
+                                (self.eff_count[:,i] * (
+                                digamma(self.alpha[m,k]) - np.log(self.beta[m,k])) - 
+                                self.int_length * self.alpha[m,k] / self.beta[m,k])).sum()
+                                )
+                # Renormalise the row
+                tau_temp_i_norm = np.exp(tau_temp_i - logsumexp(tau_temp_i))
+                self.tau_prior[i,:] = tau_temp_i_norm
+                
+        # # Convert to exponential and normalise using logsumexp
+        # self.tau = np.exp(tau_temp - logsumexp(tau_temp, axis=1)[:,None])
+        # self.tau_prior = self.tau.copy()
 
     def _update_q_z_prime(self):
         """
         A method to compute the CAVI approximation to the posterior of z.
         This is computed differently depending on the value of 
         infer_graph_structure and infer_number_groups. 
-        """
-        term1 = self.delta_z * (digamma(self.xi) - digamma(self.xi.sum()))
-        term2a = np.einsum('jm,ij,km -> ik', self.tau_prime_prior, self.sigma, 
-                        digamma(self.eta) - digamma(self.eta + self.zeta))
-        term2b = np.einsum('jm,ji,mk -> ik', self.tau_prime_prior, self.sigma, 
-                        digamma(self.eta) - digamma(self.eta + self.zeta))
-        term3a = np.einsum('jm,ij,km -> ik', self.tau_prime_prior, 1 - self.sigma, 
-                        digamma(self.zeta) - digamma(self.eta + self.zeta))
-        term3b = np.einsum('jm,ji,mk -> ik', self.tau_prime_prior, 1 - self.sigma, 
-                        digamma(self.zeta) - digamma(self.eta + self.zeta))
-        tau_temp = (term1 + term2a + term2b + term3a + term3b)
+        # """
+        # term1 = self.delta_z * (digamma(self.xi) - digamma(self.xi.sum()))
+        # term2a = np.einsum('jm,ij,km -> ik', self.tau_prime_prior, self.sigma, 
+        #                 digamma(self.eta) - digamma(self.eta + self.zeta))
+        # term2b = np.einsum('jm,ji,mk -> ik', self.tau_prime_prior, self.sigma, 
+        #                 digamma(self.eta) - digamma(self.eta + self.zeta))
+        # term3a = np.einsum('jm,ij,km -> ik', self.tau_prime_prior, 1 - self.sigma, 
+        #                 digamma(self.zeta) - digamma(self.eta + self.zeta))
+        # term3b = np.einsum('jm,ji,mk -> ik', self.tau_prime_prior, 1 - self.sigma, 
+        #                 digamma(self.zeta) - digamma(self.eta + self.zeta))
+        # tau_temp = (term1 + term2a + term2b + term3a + term3b)
 
-        # Convert to exponential and normalise using logsumexp
-        self.tau_prime = np.exp(tau_temp - logsumexp(tau_temp, axis=1)[:,None])
-        self.tau_prime_prior = self.tau_prime.copy()
+        # # Convert to exponential and normalise using logsumexp
+        # self.tau_prime = np.exp(tau_temp - logsumexp(tau_temp, axis=1)[:,None])
+        # self.tau_prime_prior = self.tau_prime.copy()
+        digamma_diff = digamma(self.xi) - digamma(self.xi.sum())
+        digamma_diff_1 = np.diag(digamma(self.eta) - digamma(self.eta + self.zeta))
+        digamma_diff_2 = np.diag(digamma(self.zeta) - digamma(self.eta + self.zeta))
+        for i in range(self.num_nodes):
+            tau_temp_i = np.zeros((self.num_groups_prime, ))
+            for k in range(self.num_groups_prime):
+                tau_temp_i[k] = (digamma_diff[k] + 
+                                self.sigma[i,i] * digamma_diff_1[k] + 
+                                (1 - self.sigma[i,i]) * digamma_diff_2[k])
+                for m in range(self.num_groups_prime):
+                    if m == k:
+                        mask = np.ones((self.num_nodes,), dtype=bool)
+                        mask[i] = False # Exclude i == j and k == m
+                        tau_temp_i[k] += (
+                            (self.tau_prime_prior[mask,m] * (
+                                self.sigma[i,mask] * (
+                                    digamma(self.eta[k,m]) - digamma(self.eta[k,m] + self.zeta[k,m])
+                                ) +
+                                (1 - self.sigma[i,mask]) * (
+                                    digamma(self.zeta[k,m]) - digamma(self.eta[k,m] + self.zeta[k,m])
+                                ) +
+                                self.sigma[mask,i] * (
+                                    digamma(self.eta[m,k]) - digamma(self.eta[m,k] + self.zeta[m,k])
+                                ) +
+                                (1 - self.sigma[mask,i]) * (
+                                    digamma(self.zeta[m,k]) - digamma(self.eta[m,k] + self.zeta[m,k])
+                                )
+                            ) 
+                            ).sum()
+                        )
+                    else:
+                        tau_temp_i[k] += (
+                            (self.tau_prime_prior[:,m] * (
+                                self.sigma[i,:] * (
+                                    digamma(self.eta[k,m]) - digamma(self.eta[k,m] + self.zeta[k,m])
+                                ) +
+                                (1 - self.sigma[i,:]) * (
+                                    digamma(self.zeta[k,m]) - digamma(self.eta[k,m] + self.zeta[k,m])
+                                ) +
+                                self.sigma[:,i] * (
+                                    digamma(self.eta[m,k]) - digamma(self.eta[m,k] + self.zeta[m,k])
+                                ) +
+                                (1 - self.sigma[:,i]) * (
+                                    digamma(self.zeta[m,k]) - digamma(self.eta[m,k] + self.zeta[m,k])
+                                )
+                            ) 
+                            ).sum()
+                        )
+            # Renormalise the row
+            tau_temp_i_norm = np.exp(tau_temp_i - logsumexp(tau_temp_i))
+            self.tau_prime_prior[i,:] = tau_temp_i_norm
 
     def _update_q_pi(self):
         """
@@ -349,13 +512,13 @@ class VariationalBayes:
             sum_term[:] = self.tau[:,(j+1):].sum(axis=1) 
             self.nu[j] = sum_term.sum() + self.nu_prior[j]
 
-    def _MAD_KL_outlier_detector(self, alpha, beta, max_lag, cutoff):
+    def _MAD_KL_outlier_detector(self, alpha, beta, max_lag, L):
         """
         The function takes data contains all points up to and including
         the current update time, assuming that the burn-in points aren't 
         included. 
         """
-        ## Compute the KL-divergences off all lags up to current lag
+        ## Compute the KL-divergences off all lags up to max_lag
         kl_lag_list = list()
         kl_curr_datum_list = list()
         for lag in range(1, max_lag + 1):
@@ -367,12 +530,10 @@ class VariationalBayes:
                 (alpha_1 - alpha_2) * digamma(alpha_1) -
                 (beta_1 - beta_2) * alpha_1 / beta_1
             )
-            if lag == max_lag:
-                kl_curr_datum_list.append(kl_lag[-1])
-                kl_lag_list.append(kl_lag[:-1])
-            else:
-                kl_curr_datum_list.append(kl_lag[-(max_lag - lag)])
-                kl_lag_list.append(kl_lag[:(max_lag - lag)])
+            # The KL-div for current observation 
+            kl_curr_datum_list.append(kl_lag[-1])
+            # The KL-divs for previous observations
+            kl_lag_list.append(kl_lag[:-1])
         kl_curr_datum = np.array(kl_curr_datum_list)
         kl_lag = np.concatenate(kl_lag_list)
 
@@ -386,30 +547,93 @@ class VariationalBayes:
                 np.abs(kl_curr_datum[i] - np.median(kl_lag)) / curr_MAD
                 )
         # Flag as a change point if all lags are greater than the cutoff
-        if np.all(np.array(MAD_deviation_lags) > cutoff):
+        if np.all(np.array(MAD_deviation_lags) > L):
             return 1
         else: 
             return 0
+        
+    def _MAD_JS_outlier_detector(self, tau, max_lag, L):
+        """
+        The function takes data contains all points up to and including
+        the current update time, assuming that the burn-in points aren't 
+        included. 
+        """
+        ## Compute the JS-divergences off all lags up to current lag
+        # List to store all the JS-divergences
+        js_lag_list = list()
+        # List to store the current JS-divergence
+        js_curr_datum_list = list()
+
+        curr_pred = tau[-1,:,:].argmax(axis=1)
+        pred_change_bool = np.ones(shape=(self.num_nodes,), dtype=bool)
+        for lag in range(1, max_lag + 1):
+            tau_1 = tau[max_lag:, :]; tau_2 = tau[(max_lag - lag):-lag, :]
+
+            curr_lag_pred = tau[-(lag + 1),:,:].argmax(axis=1)
+            pred_change_bool = ((curr_pred != curr_lag_pred) & pred_change_bool)
+
+            tau_1_safe = np.where(tau_1 == 0, 1e-10, tau_1)
+            tau_2_safe = np.where(tau_2 == 0, 1e-10, tau_2)
+
+            log_term_1 = (
+                tau_1_safe * np.log(2 * tau_1_safe / (tau_1_safe + tau_2_safe))
+            )
+            log_term_2 = (
+                tau_2_safe * np.log(2 * tau_2_safe / (tau_1_safe + tau_2_safe))
+            )
+
+            log_term_1[log_term_1 == 0] = 1e-300
+            log_term_2[log_term_2 == 0] = 1e-300
+            log_term_1 = np.where(tau_1 == 0, 1e-300, log_term_1)
+            log_term_2 = np.where(tau_2 == 0, 1e-300, log_term_2)
+
+            js_lag = (
+                np.sum(log_term_1 + log_term_2, axis = 2) / 2 
+            )
+            js_curr_datum_list.append(js_lag[-1, :])
+            js_lag_list.append(js_lag[:-1, :])
+
+        js_curr_datum = np.array(np.log(np.abs(js_curr_datum_list)))
+        js_lag = np.array(np.log(np.abs((js_lag_list)))).flatten()
+
+        ## Compute the current MAD and the deviation of the current datum
+        # Current MAD (excluding current datum)
+        curr_MAD = median_abs_deviation(js_lag)
+        # Deviation of current datum (for each lag up to max_lag)
+        MAD_deviation_lags = []
+        for i in range(max_lag):
+            MAD_deviation_lags.append(
+                np.abs(js_curr_datum[i, :] - np.median(js_lag)) / curr_MAD
+                )
+        # Flag as a change point if all lags are greater than the cutoff
+        return (np.all((np.array(MAD_deviation_lags) > L), axis=0) & pred_change_bool)
 
     def run_full_var_bayes(self, delta_pi: float=1, delta_mu: float=1, delta_lam: float=1, 
-                           delta_rho: float=1, delta_z:float=1, n_cavi: int=2, 
-                           cp_burn_steps: int=10, cp_stationary_steps: int=10,
-                           cp_kl_lag_steps: int=2, cp_kl_thresh: float=10, 
-                           cp_rate_wait: float=0.5, ARLO_bool: bool=False):
+                           delta_rho: float=1, delta_z:float=1, n_cavi: int=2, num_fp_its: int = 3,
+                           B1: int=10, B2: int=10,
+                           kappa_kl: int=2, L_kl: float=10, 
+                           kappa_js: int=2, L_js: float=10):
         """
         A method to run the variational Bayesian update in its entirety.
         Parameters:
-            - delta_pi, delta_rho, delta_lam: decay values.
+            - delta_pi, delta_mu, delta_rho, delta_lam, delta_rho: BFF values.
             - n_cavi: the number of CAVI iterations at each run.
-            - cp_burn_steps: the number of steps we allow up until we start to track 
+            - B1: the number of steps we allow up until we start to track 
                              change point metrics.
-            - cp_kl_lag_steps: maximum lag (IN NUMBER OF STEPS) we consider for 
-                               the KL flag.
-            - cp_kl_thresh: the threshold for the MAD-KL flag.
-            - cp_rate_wait: the assumed time of stationarity between changes
+            - B2: the assumed time of stationarity between changes
                             to the rate of the process.
+            - kappa_kl: maximum lag (IN NUMBER OF STEPS) we consider for 
+                               the KL flag (kappa for rates).
+            - L_kl: the threshold for the MAD-KL flag (L for rates).
+            - kappa_js: maximum lag (IN NUMBER OF STEPS) we consider for 
+                             the JS flag (kappa for memberships).
+            - L_js: the threshold for the MAD-JS flag (L for memberships).
         """
-        ## Decay rates for the prior
+        # ==============================================    
+        # Initialise empty arrays and save parameteters
+        # ==============================================
+        
+        ## BFF values for tempering the prior
         self.delta_mu = delta_mu
         self.delta_pi = delta_pi
         self.delta_rho = delta_rho
@@ -418,30 +642,15 @@ class VariationalBayes:
         if self.infer_num_groups_bool:
             self.delta_lam = np.ones((self.num_var_groups, 
                                       self.num_var_groups)) * delta_lam
-            
         else:
-            self.delta_lam = np.ones((self.num_groups, self.num_groups)) * delta_lam
+            self.delta_lam = np.ones((self.num_groups, 
+                                      self.num_groups)) * delta_lam
 
-        ## Empty arrays for storage
         if self.infer_graph_bool:
-            self.eta_store = np.zeros((len(self.intervals) + 1, 
-                                       self.num_groups_prime, 
-                                       self.num_groups_prime))
-            self.zeta_store = np.zeros((len(self.intervals) + 1, 
-                                        self.num_groups_prime, 
-                                        self.num_groups_prime))
-            self.xi_store = np.zeros((len(self.intervals) + 1, 
-                                        self.num_groups_prime))
-            self.tau_prime_store = np.zeros((len(self.intervals) + 1, 
-                                        self.num_nodes, 
-                                        self.num_groups_prime))
-            
             self.lam_big_store = np.zeros((self.num_nodes, self.num_nodes))
+
+        ## Arrays for storing estimates
         if self.infer_num_groups_bool:
-            self.omega_store = np.zeros((len(self.intervals) + 1,
-                                          self.num_var_groups))
-            self.nu_store = np.zeros((len(self.intervals) + 1,
-                                          self.num_var_groups)) 
             self.tau_store = np.zeros((len(self.intervals) + 1, 
                                         self.num_nodes, 
                                         self.num_var_groups))
@@ -452,9 +661,6 @@ class VariationalBayes:
                                         self.num_var_groups, 
                                         self.num_var_groups))
         else:
-            self.gamma_store = np.zeros((len(self.intervals) + 1, 
-                                        self.num_groups))
-        
             self.tau_store = np.zeros((len(self.intervals) + 1, 
                                         self.num_nodes, 
                                         self.num_groups))
@@ -464,8 +670,10 @@ class VariationalBayes:
             self.beta_store = np.zeros((len(self.intervals) + 1, 
                                         self.num_groups, 
                                         self.num_groups))
+            
+        self.group_memberships = np.zeros((len(self.intervals) + 1 - B1,
+                                          self.num_nodes))
 
-        ## Initialise relevant parameters if needed
         if self.infer_num_groups_bool:
             self.tau_prior = (
                 np.array([1 / self.num_var_groups] * 
@@ -482,69 +690,62 @@ class VariationalBayes:
                 np.array([1 / self.num_groups] * (self.num_nodes * self.num_groups))
                 .reshape((self.num_nodes, self.num_groups))
             )
-        # Store parameter value
-        self.tau_store[0,:,:] = self.tau_prior
-        if self.infer_graph_bool:
-            # Store parameter value
-            self.tau_prime_store[0,:,:] = self.tau_prime_prior
-
-        # Set parameter value
+        
+        # Set initial hyperparameter values
         self.alpha = self.alpha_prior
         self.beta = self.beta_prior
-
-        # Store parameter value
-        self.alpha_store[0,:,:] = self.alpha
-        self.beta_store[0,:,:] = self.beta
-
         if self.infer_num_groups_bool:
-            # Set parameter value
             self.nu = self.nu_prior
             self.omega = self.omega_prior
-
-            # Store parameter value
-            self.nu_store[0,:] = self.nu_prior
-            self.omega_store[0,:] = self.omega_prior
-
         else:
             if self.infer_graph_bool:
-                # Set parameter value
                 self.eta = self.eta_prior
                 self.zeta = self.zeta_prior
                 self.xi = self.xi_prior
-
-                # Store parameter value
-                self.eta_store[0,:,:] = self.eta
-                self.zeta_store[0,:,:] = self.zeta
-                self.xi_store[0,:] = self.xi
-
-            # Set parameter value
             self.gamma = self.gamma_prior
 
-            # Store parameter value
-            self.gamma_store[0,:] = self.gamma
-
+        # Store parameter values
+        self.alpha_store[0,:,:] = self.alpha
+        self.beta_store[0,:,:] = self.beta
+        self.tau_store[0,:,:] = self.tau_prior
+            
         ## List for storing flagged changes
         self.group_changes_list = []
         self.rate_changes_list = []
-        prev_change_time = 0
 
+        ## Array for storing the index of the latest change to group rates.
+        if self.infer_num_groups_bool:
+            prev_change_idx_rates = np.zeros((self.num_var_groups, 
+                                              self.num_var_groups))  
+        else:
+            prev_change_idx_rates = np.zeros((self.num_groups, 
+                                              self.num_groups))  
+            
         ## Run the VB inference procedure            
         for it_num, update_time in enumerate(self.intervals):
-            ## Run remaining runs
             print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...")
-
-            ## Reset the interval length
-            self.int_length = self.int_length_temp
+    
+            # ==============================================
+            # Run the variational Bayes inference procedure
+            # ==============================================
 
             ## Compute counts in the interval
-            self._compute_eff_count(update_time)
+            if self.sampled_network_bool:
+                self._compute_eff_count(update_time)
+            else:
+                self._compute_eff_count_large(it_num)
 
             ## Update estimates (run CAVI n_cavi times)
+            # Inferring the graph structure
             if self.infer_graph_bool:
                 cavi_count = 0
                 while cavi_count < n_cavi:
-                    self._update_q_z()
-                    self._update_q_z_prime()
+                    for rep in range(num_fp_its):
+                        self._update_q_z()
+                    self.tau = self.tau_prior.copy()
+                    for rep in range(num_fp_its):
+                        self._update_q_z_prime()
+                    self.tau_prime = self.tau_prime_prior.copy()
                     self._update_q_pi()
                     self._update_q_mu()
                     self._update_q_lam()
@@ -552,22 +753,109 @@ class VariationalBayes:
                     self._update_q_a()
                     cavi_count += 1
 
+            # Inferring the number of groups
             elif self.infer_num_groups_bool:
                 cavi_count = 0
                 while cavi_count < n_cavi:
-                    self._update_q_z()    
+                    for rep in range(num_fp_its):
+                        self._update_q_z()    
+                    self.tau = self.tau_prior.copy()
                     self._update_q_u()
                     self._update_q_lam()
                     cavi_count += 1
+            
+            # Known graph structure and number of groups
             else:
                 cavi_count = 0
                 while cavi_count < n_cavi:
-                    self._update_q_z()
+                    for rep in range(num_fp_its):
+                        self._update_q_z()
+                    self.tau = self.tau_prior.copy()
                     self._update_q_pi()
                     self._update_q_lam()
                     cavi_count += 1
 
-            ## Update priors
+            # ========================
+            # Check for change points
+            # ========================
+            if (it_num + 1) == B1:
+                self.group_memberships[it_num + 1 - B1, :] = self.tau.argmax(axis=1)
+            if (B1 < (it_num + 1)) & ((it_num + 1) <= B1 + B2):
+                self.group_memberships[it_num + 1 - B1, :] = (
+                    self.group_memberships[it_num - B1, :]
+                )
+            if (it_num + 1) > (B1 + B2):
+                self.group_memberships[it_num + 1 - B1, :] = (
+                    self.group_memberships[it_num - B1, :]
+                )
+                # =============================
+                # Check for membership changes
+                # =============================
+
+                tau_burned = self.tau_store[B1:(it_num + 1), :, :]
+                mem_cp_flag = self._MAD_JS_outlier_detector(
+                                        tau_burned, 
+                                        kappa_js, L_js
+                                        )
+                changed_nodes = np.where(mem_cp_flag)[0]
+                unchanged_nodes = np.where(~mem_cp_flag)[0]
+                if len(changed_nodes) > 0:
+                    print(f"Changed nodes: {changed_nodes}")
+                    self.group_changes_list.append(
+                        [update_time,
+                        changed_nodes]
+                    )
+                    self.group_memberships[it_num + 1 - B1, changed_nodes] = (
+                        self.tau.argmax(axis=1)[changed_nodes]
+                    )
+                # =======================
+                # Check for rate changes
+                # =======================
+
+                # # Only start to track changes after B1 + kappa_kl runs
+                # if (it_num + 1) > (B1 + B2 + kappa_kl):
+                #     if self.infer_num_groups_bool:
+                #         num_check_groups = self.num_var_groups
+                #     else:
+                #         num_check_groups = self.num_groups
+                #     for k in range(num_check_groups):
+                #         for m in range(num_check_groups):
+                #             # Extract index of latest change point and relevant stream values.
+                #             latest_change_idx = int(prev_change_idx_rates[k,m])
+                #             # Wait for period of stationarity
+
+                #             if (it_num + 1 - latest_change_idx) < B2:
+                #                 pass
+                #             if latest_change_idx == 0:
+                #                 alpha_burned = (
+                #                     self.alpha_store[B1:(it_num + 1), k, m]
+                #                 )
+                #                 beta_burned = (
+                #                     self.beta_store[B1:(it_num + 1), k, m]
+                #                 )
+                #             else:
+                #                 alpha_burned = (
+                #                     self.alpha_store[(latest_change_idx + 1):(it_num + 1), 
+                #                                      k, m]
+                #                 )
+                #                 beta_burned = (
+                #                     self.beta_store[(latest_change_idx + 1):(it_num + 1), 
+                #                                     k, m]
+                #                 )
+                #             # Check for change point to rates
+                #             rate_cp_flag = self._MAD_KL_outlier_detector(
+                #                         alpha_burned, beta_burned, 
+                #                         kappa_kl, L_kl
+                #                         )
+                #             if rate_cp_flag:
+                #                 self.rate_changes_list.append(
+                #                     [update_time, update_time - self.int_length, k, m]
+                #                     )
+                #                 prev_change_idx_rates[k, m] = it_num
+
+            # ==============
+            # Update priors 
+            # ==============
             self.tau_prior = self.tau.copy()
             self.alpha_prior = self.alpha.copy()
             self.beta_prior = self.beta.copy()
@@ -582,73 +870,10 @@ class VariationalBayes:
                     self.xi_prior = self.xi.copy()
                     
                 self.gamma_prior = self.gamma.copy()
-                
-            ## Detect if any change points
-            # Zero indexing
-            if (it_num + 1) == cp_burn_steps:
-                # Current predicted group values
-                pred_groups_old = self.tau.argmax(axis=1)
-            elif (it_num + 1) > cp_burn_steps:
-                ## Group changes
-                # Current predicted group values
-                pred_groups_curr = self.tau.argmax(axis=1)
-                num_group_changes = (
-                    (pred_groups_curr != pred_groups_old).sum()
-                )
-                changing_nodes = np.argwhere(
-                    pred_groups_curr != pred_groups_old
-                ).flatten()
-                pred_groups_old = pred_groups_curr.copy()
-                self.group_changes_list.append([update_time, 
-                                                num_group_changes,
-                                                changing_nodes]
-                                                )
-
-                ## Rate changes
-                # Only start to track changes after cp_burn_steps + max_lag runs
-                if (it_num + 1) > (cp_burn_steps + cp_kl_lag_steps):
-                    if self.infer_num_groups_bool:
-                        num_check_groups = self.num_var_groups
-                    else:
-                        num_check_groups = self.num_groups
-                    for j in range(num_check_groups):
-                        for k in range(num_check_groups):
-                            alpha_burned = (
-                                self.alpha_store[cp_burn_steps:(it_num + 1), j, k]
-                            )
-                            beta_burned = (
-                                self.beta_store[cp_burn_steps:(it_num + 1), j, k]
-                            )
-                            cp_flag = self._MAD_KL_outlier_detector(
-                                        alpha_burned, beta_burned, 
-                                        cp_kl_lag_steps, cp_kl_thresh
-                                        )
-                            if cp_flag:
-                                curr_change_time = update_time
-                                if curr_change_time - prev_change_time > cp_rate_wait:
-                                    if (update_time - self.int_length > 
-                                        ((cp_stationary_steps + cp_burn_steps) * self.int_length)):
-                                        self.rate_changes_list.append(
-                                            [update_time, update_time - self.int_length, j, k]
-                                            )
-                                        if ARLO_bool:
-                                            return update_time - self.int_length
-                                        else:
-                                            prev_change_time = curr_change_time
 
             ## Store estimates
             self.tau_store[it_num + 1,:,:] = self.tau
             self.alpha_store[it_num + 1,:,:] = self.alpha
             self.beta_store[it_num + 1,:,:] = self.beta
-            if self.infer_num_groups_bool:
-                self.nu_store[it_num + 1,:] = self.nu
-                self.omega_store[it_num + 1,:] = self.omega
-            else:
-                if self.infer_graph_bool:
-                    self.tau_prime_store[it_num + 1,:,:] = self.tau_prime
-                    self.eta_store[it_num + 1,:,:] = self.eta
-                    self.zeta_store[it_num + 1,:,:] = self.zeta
-                    self.xi_store[it_num + 1,:] = self.xi
-                self.gamma_store[it_num + 1,:] = self.gamma
 
 # %%
