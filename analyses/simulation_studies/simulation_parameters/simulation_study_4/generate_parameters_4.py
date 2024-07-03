@@ -9,31 +9,12 @@ SIMULATION STUDY 4.
 This simulation study is for a node change of 
 """
 # Rate and connection matrices
-lam_mat = [[[2.0, 1.0], [0.3, 8.0]]]
 
 # Other simulation and inference parameters
-num_nodes_set = [500]
-num_groups_set = [2]
-group_props_set = [[0.6, 0.4]]
-n_cavi_set = [3]
-int_length_set = [0.1]
-delta_set = [0.1]
-T_max = [25]
-connection_prob = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75]
-N_runs_set = [[0, 10], [10, 20], [20, 30], [30, 40], [40, 50]]
-
+connection_prob = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 1]
 
 all_combinations = list(
-    itertools.product(lam_mat,
-                      num_nodes_set, 
-                      num_groups_set,
-                      group_props_set, 
-                      n_cavi_set, 
-                      int_length_set,
-                      delta_set, 
-                      T_max,
-                      connection_prob,
-                      N_runs_set)
+    itertools.product(connection_prob)
 )
 
 with open("analyses/simulation_studies/"

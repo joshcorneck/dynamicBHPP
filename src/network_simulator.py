@@ -1,5 +1,5 @@
 """
-This file contains a class for simulation a BHPP.
+This file contains a class for simulation of a dynamic BHPP.
 """
 import numpy as np
 from more_itertools import flatten
@@ -39,6 +39,7 @@ class PoissonNetwork(BaseNetwork):
     Parameters:
         - num_nodes: an integer for the number of num_nodes in the network.
         - num_groups: an integer for the number of latent groups.
+        - num_groups_prime: an integer for the number of SBM groups.
         - T_max: the upper limit of the time interval from which we
                  sample.
         - lam_matrix: array for the rate parameters.
@@ -56,8 +57,8 @@ class PoissonNetwork(BaseNetwork):
         self._create_change_point_times_flag = False
 
     def _create_change_point_times(self, mem_change: bool, rate_change: bool, group_num_change:bool,
-                                   mem_change_times: list, rate_change_times: list, 
-                                   group_num_change_times: list, num_mem_cps: int, 
+                                   mem_change_times: np.array, rate_change_times: np.array, 
+                                   group_num_change_times: np.array, num_mem_cps: int, 
                                    num_rate_cps: int): 
         """
         Create a list of the relevant change point times. The user can supply the change
@@ -65,6 +66,7 @@ class PoissonNetwork(BaseNetwork):
         Parameters:
             - mem_change: Boolean for whether we see a change in memberships.
             - rate_change: Boolean for whether we see rate matrix change.
+            - group_num_change: Booldean for whether the number of groups changes.
             - mem_change_times: list of change point times for membership changes,
                                 if this isn't given, it's sampled.
             - rate_change_times: list of change point times for rate matrix changes,
@@ -131,7 +133,7 @@ class PoissonNetwork(BaseNetwork):
             self.full_cp_times = full_cp_times_indicator
             
 
-        ## CASE 2: mem but not rate changes
+        ## CASE 1: mem but not rate changes
         elif (mem_change & (not rate_change)):
             # If not supplied, change times are randomly sampled.
             if mem_change_times is None:
@@ -162,7 +164,7 @@ class PoissonNetwork(BaseNetwork):
                 self.rate_change_point_times = rate_change_times
             self.rate_change_point_times.sort()
 
-        # CASE 4: group merge
+        # CASE 4: group number change
         elif (group_num_change):
             # If not supplied, change times are randomly sampled.
             if group_num_change_times is None:
@@ -177,8 +179,9 @@ class PoissonNetwork(BaseNetwork):
         This will be of length num_mem_cps + 1 (so it is of length 1 if no changes).
         There are different methods for assigning group memberships.
         Parameters:
-            - group_sizes: the number of number of nodes in each group. The length must
+            - group_sizes: the number of nodes in each group. The length must
                             be the same as the number of groups.
+            - group_sizes_prime: the number of nodes in each SBM group.
             - mem_change_nodes: the nodes that will change membership.
         """
         if group_sizes is None:
@@ -191,14 +194,10 @@ class PoissonNetwork(BaseNetwork):
                     raise ValueError("Ensure the all group sizes sum to the total number of nodes.")
                 if group_sizes[i].shape[0] != self.num_groups:
                     raise ValueError("Ensure that group_sizes shape matches the number of groups.")
-                if group_sizes_prime[i].shape[0] != self.num_groups_prime:
-                    raise ValueError("Ensure that group_sizes shape matches the number of groups.")
         else:
             if np.array(group_sizes).sum() != self.num_nodes:
                 raise ValueError("Ensure the group sizes sum to the total number of nodes.")
             if group_sizes.shape[0] != self.num_groups:
-                raise ValueError("Ensure that group_sizes shape matches the number of groups.")
-            if group_sizes_prime.shape[0] != self.num_groups_prime:
                 raise ValueError("Ensure that group_sizes shape matches the number of groups.")
             
         ## Create assignments for change points
@@ -214,7 +213,6 @@ class PoissonNetwork(BaseNetwork):
             initial_groups_prime = np.array(
                 list(flatten([[i]*j for i,j in enumerate(group_sizes_prime)]))
             )
-
 
             # Get a numpy array of num_changing. Value of num_changing is the number of nodes 
             # changing membership at that time
@@ -267,7 +265,7 @@ class PoissonNetwork(BaseNetwork):
                 list(flatten([[i]*j for i,j in enumerate(group_sizes[0])]))
             )
             initial_groups_prime = np.array(
-                list(flatten([[i]*j for i,j in enumerate(group_sizes_prime[0])]))
+                list(flatten([[i]*j for i,j in enumerate(group_sizes_prime)]))
             )
 
             groups_in_regions.append(initial_groups)
@@ -295,7 +293,8 @@ class PoissonNetwork(BaseNetwork):
     def _create_rate_matrices(self, sigma: float, entries_to_change: list):
         """
         Currently this only has functionality to randomly change one of the entries 
-        according to a normal distribution centred at that value with s.d. sigma.
+        according to a normal distribution centred at that value with s.d. sigma. Only
+        called if rate matrices aren't supplied.
         """
         if self.rate_change:
             self.lam_matrices = []
@@ -319,7 +318,7 @@ class PoissonNetwork(BaseNetwork):
         """
         Samples an adjacency matrix from the supplied rho_matrix.
         Parameters:
-            - groups: the node memberships in each region.
+            - groups: the SBM node memberships in each region.
         """
         if self.rho_matrix is not None:
             temp_mat = self.rho_matrix[groups]
