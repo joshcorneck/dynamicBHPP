@@ -146,3 +146,12 @@ dmypy.json
 
 # Pickled files
 *.pkl
+
+# Data
+*.csv
+*.txt.gz
+*.txt
+*.npz
+*.npy
+*.parquet
+*.json

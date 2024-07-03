@@ -1,0 +1,16 @@
+#bin/bash
+#PBS -N test
+#PBS be
+#PBS -o ${HOME}/online_networks/code/simulation_studies/simulation_study_3/o_files/output.log
+#PBS -e ${HOME}/online_networks/code/simulation_studies/simulation_study_3/e_files/error.log
+#PBS -q parallel16
+#PBS -t 0-11
+
+cd ${HOME}/online_networks/code/simulation_studies/simulation_study_3
+
+export PYTHONPATH=${HOME}/online_networks/code
+
+source ../../../online_networks_venv/bin/activate
+
+python3 -u simulation_study_3.py > "progress_output/test_output_$PBS_ARRAYID.out"
+
