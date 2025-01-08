@@ -831,68 +831,6 @@ class VariationalBayes:
                         self.tau.argmax(axis=1)[changed_nodes]
                     )
 
-                
-                # # Compute JS between current estimate and latest of cal_Y
-                # tau_curr = self.tau.copy()
-                # tau_B2 = cal_X_tau[-1].copy()
-                # tau_curr_safe = np.where(tau_curr == 0, 1e-10, tau_curr)
-                # tau_B2_safe = np.where(tau_B2 == 0, 1e-10, tau_B2)
-                
-                # log_term_1 = (
-                #     tau_curr_safe * np.log(2 * tau_curr_safe / (tau_curr_safe + tau_B2_safe))
-                # )
-                # log_term_2 = (
-                #     tau_B2_safe * np.log(2 * tau_B2_safe / (tau_curr_safe + tau_B2_safe))
-                # )
-                # log_term_1[log_term_1 == 0] = 1e-300
-                # log_term_2[log_term_2 == 0] = 1e-300
-                # log_term_1 = np.where(tau_curr == 0, 1e-300, log_term_1)
-                # log_term_2 = np.where(tau_B2_safe == 0, 1e-300, log_term_2)
-                # non_log_curr_JS_diff = (
-                #     np.sum(log_term_1 + log_term_2, axis = 1) / 2
-                # )
-                # curr_JS_diff = np.log(np.abs(non_log_curr_JS_diff)) # One for each node here (N,)
-                # # Current MAD (excluding current datum)
-                # curr_MAD = median_abs_deviation(cal_Y_groups, axis=0) # One for each node here (N,)
-                # # Deviation of current datum
-                # MAD_deviation = (
-                #         np.abs(curr_JS_diff - np.median(cal_Y_groups, axis=0)) / curr_MAD
-                #     )
-                # # Which nodes are outliers
-                # node_outliers = (MAD_deviation > L_js)    
-                # outlier_counter_groups[node_outliers] += 1
-                # outlier_counter_groups[~node_outliers] = 0
-                # # Adjust cal_X for those that aren't outliers
-                # cal_X_tau[:-1,~node_outliers] = cal_X_tau[1:,~node_outliers].copy() # Shift all entries
-                # cal_X_tau[-1,~node_outliers] = self.tau[~node_outliers,:].copy() # Adjust final value
-                # # Recompute cal_Y_groups where cal_X has changed
-                # cal_Y_groups[:,~node_outliers] = (
-                #     self.compute_cal_Y_groups(kappa_js, B2, cal_X_tau[:,~node_outliers,:])
-                #     )
-
-                # # First change point check (kappa_js consecutive outliers)
-                # first_cp_check = (outlier_counter_groups == kappa_js)
-                
-                # # Second change point check (argmax check)
-                # # argmax of previous kappa_js iterations
-                # # argmax_X_kappa_js = np.argmax(cal_X_tau[-kappa_js:], axis=2)
-                # argmax_X_kappa_js = np.argmax(self.tau_store[(it_num + 1 - kappa_js):(it_num + 1),:,:], axis=2)
-                # argmax_curr_change = np.all(self.tau.argmax(axis=1) != argmax_X_kappa_js, axis=0)
-                # argmax_X_same = np.all(argmax_X_kappa_js == argmax_X_kappa_js[0, :], axis=0)
-                # second_cp_check = argmax_curr_change & argmax_X_same # Combine the results
-
-                # change_point = first_cp_check & second_cp_check # Boolean of all nodes that have changed groups
-                # outlier_counter_groups[change_point] = 0
-                
-                # # Update group memberships for current iteration
-                # self.group_memberships[it_num + 1 - B1, ~change_point] = (
-                #     self.group_memberships[it_num - B1, ~change_point]
-                # )
-                # self.group_memberships[it_num + 1 - B1, change_point] = self.tau.argmax(axis=1)[change_point]
-                
-                # change_nodes = np.where(change_point)[0]
-                # self.group_changes_list.append([self.intervals[it_num + 1 - kappa_js], change_nodes])
-
             # ==============
             # Update priors 
             # ==============
