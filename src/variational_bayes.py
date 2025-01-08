@@ -466,47 +466,6 @@ class VariationalBayes:
                 self.delta_u * (self.nu_prior[j] - 1) + 1
             )
 
-    def _MAD_KL_outlier_detector(self, alpha, beta, max_lag, L):
-        """
-        Function to detect rate changes.
-        The function takes data contains all points up to and including
-        the current update time, assuming that the burn-in points aren't 
-        included, and outputs 1 or 0 whether a change is detected or not.
-        """
-        ## Compute the KL-divergences off all lags up to max_lag
-        kl_lag_list = list()
-        kl_curr_datum_list = list()
-        for lag in range(1, max_lag + 1):
-            alpha_1 = alpha[max_lag:]; alpha_2 = alpha[(max_lag - lag):-lag]
-            beta_1 = beta[max_lag:]; beta_2 = beta[(max_lag - lag):-lag]
-            kl_lag = (
-                alpha_2 * np.log(beta_1 / beta_2) - 
-                gammaln(alpha_1) + gammaln(alpha_2) +
-                (alpha_1 - alpha_2) * digamma(alpha_1) -
-                (beta_1 - beta_2) * alpha_1 / beta_1
-            )
-            # The KL-div for current observation 
-            kl_curr_datum_list.append(kl_lag[-1])
-            # The KL-divs for previous observations
-            kl_lag_list.append(kl_lag[:-1])
-        kl_curr_datum = np.array(kl_curr_datum_list)
-        kl_lag = np.concatenate(kl_lag_list)
-
-        ## Compute the current MAD and the deviation of the current datum
-        # Current MAD (excluding current datum)
-        curr_MAD = median_abs_deviation(kl_lag)
-        # Deviation of current datum (for each lag up to max_lag)
-        MAD_deviation_lags = []
-        for i in range(max_lag):
-            MAD_deviation_lags.append(
-                np.abs(kl_curr_datum[i] - np.median(kl_lag)) / curr_MAD
-                )
-        # Flag as a change point if all lags are greater than the cutoff
-        if np.all(np.array(MAD_deviation_lags) > L):
-            return 1
-        else: 
-            return 0
-        
     def _MAD_JS_outlier_detector(self, tau, max_lag, L):
         """
         Function to detect nodes changing groups.
@@ -563,6 +522,29 @@ class VariationalBayes:
                 )
         # Flag as a change point if all lags are greater than the cutoff
         return (np.all((np.array(MAD_deviation_lags) > L), axis=0) & pred_change_bool)
+    
+    def compute_cal_Y_rates(self, kappa_kl, B2, cal_X_alpha, cal_X_beta, k, m):
+        """
+        Function that returns a populated cal_Y array.
+        """
+        length = int(kappa_kl * (2 * B2 - kappa_kl - 1) / 2)
+        cal_Y_rates_km = np.zeros((length, ))
+        idx = -1
+        for s in range(1, kappa_kl + 1):
+            for l in range(s, B2):
+                idx += 1
+                alpha_1 = cal_X_alpha[l,k,m]
+                alpha_2 = cal_X_alpha[l-s,k,m]
+                beta_1 = cal_X_beta[l,k,m]
+                beta_2 = cal_X_beta[l-s,k,m]
+                cal_Y_rates_km[idx] = (
+                    alpha_2 * np.log(beta_1 / beta_2) - 
+                    gammaln(alpha_1) + gammaln(alpha_2) +
+                    (alpha_1 - alpha_2) * digamma(alpha_1) -
+                    (beta_1 - beta_2) * alpha_1 / beta_1
+                )
+                        
+        return cal_Y_rates_km
 
     def run_full_var_bayes(self, delta_pi: float=1, delta_u: float=1, delta_lam: float=1, 
                            delta_rho: float=1, delta_z:float=1, n_cavi: int=2, num_fp_its: int = 3,
@@ -591,6 +573,10 @@ class VariationalBayes:
         # ==============================================    
         # Initialise empty arrays and save parameteters
         # ==============================================
+        if self.infer_num_groups_bool:
+            num_check_groups = self.num_var_groups
+        else:
+            num_check_groups = self.num_groups
         
         ## BFF values for tempering the prior
         self.delta_u = delta_u
@@ -623,6 +609,9 @@ class VariationalBayes:
             self.tau_store = np.zeros((len(self.intervals) + 1, 
                                         self.num_nodes, 
                                         self.num_groups))
+            self.tau_prime_store = np.zeros((len(self.intervals) + 1, 
+                                             self.num_nodes, 
+                                             self.num_groups_prime))
             self.alpha_store = np.zeros((len(self.intervals) + 1, 
                                         self.num_groups, 
                                         self.num_groups))
@@ -671,23 +660,16 @@ class VariationalBayes:
         ## List for storing flagged changes
         self.group_changes_list = []
         self.rate_changes_list = []
-
-        ## Array for storing the index of the latest change to group rates.
-        if self.infer_num_groups_bool:
-            self.prev_change_idx_rates = np.zeros((self.num_var_groups, 
-                                              self.num_var_groups))  
-        else:
-            self.prev_change_idx_rates = np.zeros((self.num_groups, 
-                                              self.num_groups))  
-            
-        ## Run the VB inference procedure            
+        
+        ## Run the VB inference procedure 
+        wait = np.full((num_check_groups, num_check_groups), False) 
+        wait_count = np.zeros((num_check_groups, num_check_groups))            
         for it_num, update_time in enumerate(self.intervals):
             print(f"...Iteration: {it_num + 1} of {len(self.intervals)}...", end='\r')
     
             # ==============================================
             # Run the variational Bayes inference procedure
             # ==============================================
-
             ## Compute counts in the interval
             self._compute_eff_count(update_time)
  
@@ -735,19 +717,105 @@ class VariationalBayes:
             # Check for change points
             # ========================
             if (it_num + 1) == B1:
-                self.group_memberships[it_num + 1 - B1, :] = self.tau.argmax(axis=1)
-            if (B1 < (it_num + 1)) & ((it_num + 1) <= B1 + B2 + kappa_js):
+                ## Store initial estimates of group memberships
+                self.group_memberships[0, :] = self.tau.argmax(axis=1)
+            if (B1 < (it_num + 1)) & ((it_num + 1) < B1 + B2 + 1):
+                # Stationarity assumed, so keep previous membership
                 self.group_memberships[it_num + 1 - B1, :] = (
                     self.group_memberships[it_num - B1, :]
                 )
-            if (it_num + 1) > (B1 + B2 + kappa_js):
+            if ((it_num + 1) == (B1 + B2 + 1)):
+                ## Initialise sets for storing the distributions
+                # Arrays to store values for checking (\mathcal{X}_{km})
+                cal_X_alpha = np.zeros((B2, num_check_groups, num_check_groups))
+                cal_X_beta = np.zeros((B2, num_check_groups, num_check_groups))
+                # Array for storing KL divergences (\mathcal{Y})
+                length = int(kappa_kl * (2 * B2 - kappa_kl - 1) / 2)
+                cal_Y_rates = np.zeros((length, num_check_groups, num_check_groups))
+                # Initialise cal_X_alpha and cal_X_beta
+                for k in range(num_check_groups):
+                    for m in range(num_check_groups):
+                        # Up to but not including latest point
+                        cal_X_alpha[:,k,m] = self.alpha_store[B1:it_num,k,m].copy()
+                        cal_X_beta[:,k,m] = self.beta_store[B1:it_num,k,m].copy()
+                        cal_Y_rates[:,k,m] = self.compute_cal_Y_rates(kappa_kl, B2, 
+                                                                cal_X_alpha, cal_X_beta,
+                                                                k, m)
+                cal_X_tau = self.tau_store[B1:it_num].copy()
+                cal_Y_groups = self.compute_cal_Y_groups(kappa_js, B2, cal_X_tau)
+                
+                # Stores how many consecutive outliers we've seen
+                outlier_counter_rates = np.zeros((self.num_nodes, self.num_nodes)) 
+                outlier_counter_groups = np.zeros((self.num_nodes, ))
+                
+            if (it_num + 1) > (B1 + B2 + 1):
+                # =======================
+                # Check for rate changes
+                # =======================
+                for k in range(num_check_groups):
+                    for m in range(num_check_groups):
+                        if not wait[k,m]: # Check if we need to wait to collect samples after change
+                            # Compute KL between current estimate and latest of cal_Y
+                            curr_KL_diff = (
+                                cal_X_alpha[-1, k, m] * np.log(self.beta[k, m] / cal_X_beta[-1, k, m])
+                                - gammaln(self.alpha[k, m])
+                                + gammaln(cal_X_alpha[-1, k, m])
+                                + (self.alpha[k, m] - cal_X_alpha[-1, k, m]) * digamma(self.alpha[k, m])
+                                - (self.beta[k, m] - cal_X_beta[-1, k, m]) * self.alpha[k, m] / self.beta[k, m]
+                            )
+                            # Current MAD (excluding current datum)
+                            curr_MAD = median_abs_deviation(cal_Y_rates[:,k,m])
+                            # Deviation of current datum
+                            MAD_deviation = (
+                                    np.abs(curr_KL_diff - np.median(cal_Y_rates[:,k,m])) / curr_MAD
+                                )
+                            
+                            if MAD_deviation > L_kl: # At least an outlier
+                                outlier_counter_rates[k,m] += 1 
+                        
+                                if outlier_counter_rates[k,m] == kappa_kl: # A change point
+                                    self.rate_changes_list.append(
+                                        [self.intervals[it_num + 1 - kappa_kl], k, m]
+                                        )
+                                    outlier_counter_rates[k,m] = 0
+                                    wait[k,m] = True
+                                    wait_count[k,m] = 0
+                            else:
+                                outlier_counter_rates[k,m] = 0 # Reset counter and recompute cal_X and cal_Y
+                                
+                                cal_X_alpha[:-1,k,m] = cal_X_alpha[1:,k,m].copy() # Shift all entries
+                                cal_X_alpha[-1,k,m] = self.alpha[k,m].copy() # Adjust final value
+                                cal_X_beta[:-1,k,m] = cal_X_beta[1:,k,m].copy() 
+                                cal_X_beta[-1,k,m] = self.beta[k,m].copy()
+                            
+                                cal_Y_rates[:,k,m] = self.compute_cal_Y_rates(kappa_kl, B2, 
+                                                                        cal_X_alpha, cal_X_beta,
+                                                                        k, m)
+                        
+                        else: # Have detected a change and are collecting samples
+                            cal_X_alpha[int(wait_count[k,m]),k,m] = (
+                                self.alpha_store[int(it_num - kappa_kl), k, m]
+                            )
+                            cal_X_beta[int(wait_count[k,m]),k,m] = (
+                                self.beta_store[int(it_num - kappa_kl), k, m]
+                            )
+                            wait_count[k,m] += 1
+                            
+                            if wait_count[k,m] == B2:
+                                # Now compute cal_Y
+                                cal_Y_rates[:,k,m] = self.compute_cal_Y_rates(kappa_kl, B2, 
+                                                                        cal_X_alpha, cal_X_beta,
+                                                                        k, m)
+                                wait[k,m] = False
+                                wait_count[k,m] = 0
+
                 # =============================
                 # Check for membership changes
                 # =============================
                 self.group_memberships[it_num + 1 - B1, :] = (
                     self.group_memberships[it_num - B1, :]
                 )
-                tau_burned = self.tau_store[B1:(it_num + 1), :, :]
+                tau_burned = self.tau_store[(it_num + 1 - B2):(it_num + 1), :, :]
                 mem_cp_flag = self._MAD_JS_outlier_detector(
                                         tau_burned, 
                                         kappa_js, L_js
@@ -763,62 +831,67 @@ class VariationalBayes:
                         self.tau.argmax(axis=1)[changed_nodes]
                     )
 
-            # Only start to track changes after B1 + B2 + kappa_kl runs
-            if (it_num + 1) > (B1 + B2 + kappa_kl):
-                # =======================
-                # Check for rate changes
-                # =======================
-                if self.infer_num_groups_bool:
-                    num_check_groups = self.num_var_groups
-                else:
-                    num_check_groups = self.num_groups
-                for k in range(num_check_groups):
-                    for m in range(num_check_groups):
-                        compute = False
-                        # Extract index of latest change point time for lambda_km.
-                        latest_change_idx = int(self.prev_change_idx_rates[k,m])
-                        # Wait for period of stationarity
-                        if latest_change_idx == 0:
-                            alpha_burned = (
-                                self.alpha_store[B1:(it_num + 1), k, m]
-                            )
-                            beta_burned = (
-                                self.beta_store[B1:(it_num + 1), k, m]
-                            )
-                            compute = True
-                        else:
-                            if reset_stream:
-                                if (it_num + 1 - latest_change_idx) >= B2:
-                                    alpha_burned = (
-                                        self.alpha_store[(latest_change_idx + 1):(it_num + 1), 
-                                                        k, m]
-                                    )
-                                    beta_burned = (
-                                        self.beta_store[(latest_change_idx + 1):(it_num + 1), 
-                                                        k, m]
-                                    )
-                                    compute = True
-                            else:
-                                alpha_burned = (
-                                    self.alpha_store[(B1 + 1):(it_num + 1), 
-                                                    k, m]
-                                )
-                                beta_burned = (
-                                    self.beta_store[(B1 + 1):(it_num + 1), 
-                                                    k, m]
-                                )
-                                compute = True
-                        # Check for change point to rates
-                        if compute:
-                            rate_cp_flag = self._MAD_KL_outlier_detector(
-                                        alpha_burned, beta_burned, 
-                                        kappa_kl, L_kl
-                                        )
-                            if rate_cp_flag:
-                                self.rate_changes_list.append(
-                                    [update_time, k, m]
-                                    )
-                                self.prev_change_idx_rates[k, m] = it_num + 1
+                
+                # # Compute JS between current estimate and latest of cal_Y
+                # tau_curr = self.tau.copy()
+                # tau_B2 = cal_X_tau[-1].copy()
+                # tau_curr_safe = np.where(tau_curr == 0, 1e-10, tau_curr)
+                # tau_B2_safe = np.where(tau_B2 == 0, 1e-10, tau_B2)
+                
+                # log_term_1 = (
+                #     tau_curr_safe * np.log(2 * tau_curr_safe / (tau_curr_safe + tau_B2_safe))
+                # )
+                # log_term_2 = (
+                #     tau_B2_safe * np.log(2 * tau_B2_safe / (tau_curr_safe + tau_B2_safe))
+                # )
+                # log_term_1[log_term_1 == 0] = 1e-300
+                # log_term_2[log_term_2 == 0] = 1e-300
+                # log_term_1 = np.where(tau_curr == 0, 1e-300, log_term_1)
+                # log_term_2 = np.where(tau_B2_safe == 0, 1e-300, log_term_2)
+                # non_log_curr_JS_diff = (
+                #     np.sum(log_term_1 + log_term_2, axis = 1) / 2
+                # )
+                # curr_JS_diff = np.log(np.abs(non_log_curr_JS_diff)) # One for each node here (N,)
+                # # Current MAD (excluding current datum)
+                # curr_MAD = median_abs_deviation(cal_Y_groups, axis=0) # One for each node here (N,)
+                # # Deviation of current datum
+                # MAD_deviation = (
+                #         np.abs(curr_JS_diff - np.median(cal_Y_groups, axis=0)) / curr_MAD
+                #     )
+                # # Which nodes are outliers
+                # node_outliers = (MAD_deviation > L_js)    
+                # outlier_counter_groups[node_outliers] += 1
+                # outlier_counter_groups[~node_outliers] = 0
+                # # Adjust cal_X for those that aren't outliers
+                # cal_X_tau[:-1,~node_outliers] = cal_X_tau[1:,~node_outliers].copy() # Shift all entries
+                # cal_X_tau[-1,~node_outliers] = self.tau[~node_outliers,:].copy() # Adjust final value
+                # # Recompute cal_Y_groups where cal_X has changed
+                # cal_Y_groups[:,~node_outliers] = (
+                #     self.compute_cal_Y_groups(kappa_js, B2, cal_X_tau[:,~node_outliers,:])
+                #     )
+
+                # # First change point check (kappa_js consecutive outliers)
+                # first_cp_check = (outlier_counter_groups == kappa_js)
+                
+                # # Second change point check (argmax check)
+                # # argmax of previous kappa_js iterations
+                # # argmax_X_kappa_js = np.argmax(cal_X_tau[-kappa_js:], axis=2)
+                # argmax_X_kappa_js = np.argmax(self.tau_store[(it_num + 1 - kappa_js):(it_num + 1),:,:], axis=2)
+                # argmax_curr_change = np.all(self.tau.argmax(axis=1) != argmax_X_kappa_js, axis=0)
+                # argmax_X_same = np.all(argmax_X_kappa_js == argmax_X_kappa_js[0, :], axis=0)
+                # second_cp_check = argmax_curr_change & argmax_X_same # Combine the results
+
+                # change_point = first_cp_check & second_cp_check # Boolean of all nodes that have changed groups
+                # outlier_counter_groups[change_point] = 0
+                
+                # # Update group memberships for current iteration
+                # self.group_memberships[it_num + 1 - B1, ~change_point] = (
+                #     self.group_memberships[it_num - B1, ~change_point]
+                # )
+                # self.group_memberships[it_num + 1 - B1, change_point] = self.tau.argmax(axis=1)[change_point]
+                
+                # change_nodes = np.where(change_point)[0]
+                # self.group_changes_list.append([self.intervals[it_num + 1 - kappa_js], change_nodes])
 
             # ==============
             # Update priors 
@@ -839,6 +912,6 @@ class VariationalBayes:
 
             ## Store estimates
             self.tau_store[it_num + 1,:,:] = self.tau
+            self.tau_prime_store[it_num + 1,:,:] = self.tau_prime
             self.alpha_store[it_num + 1,:,:] = self.alpha
             self.beta_store[it_num + 1,:,:] = self.beta
-
